@@ -18,9 +18,19 @@ api.interceptors.request.use(
   }
 );
 
-// Handle 401 errors (unauthorized)
+// Handle responses and track Server ID
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    // Extract Server ID from response header
+    const serverId = response.headers['x-server-id'];
+    if (serverId) {
+      // Store in localStorage for persistence
+      localStorage.setItem('currentServerId', serverId);
+      // Dispatch custom event for components to listen
+      window.dispatchEvent(new CustomEvent('serverIdUpdate', { detail: serverId }));
+    }
+    return response;
+  },
   (error) => {
     if (error.response?.status === 401) {
       // Only redirect if not already on login/register page

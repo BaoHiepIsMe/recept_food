@@ -1,10 +1,12 @@
 # 🚀 Hướng Dẫn Cấu Hình MongoDB Sharded Cluster Trên 4 EC2 Instances
 
-Hướng dẫn chi tiết setup MongoDB sharded cluster với 4 EC2 instances:
+**Cài đặt trực tiếp MongoDB Community Edition (không dùng Docker) - Đơn giản và nhẹ nhất**
+
+Hướng dẫn setup MongoDB sharded cluster với 4 EC2 instances:
 - **EC2 A**: MongoDB Shard A
 - **EC2 B**: MongoDB Shard B
 - **EC2 C**: MongoDB Shard C
-- **EC2 D**: Config Server + Mongos Router
+- **EC2 D**: Config Server + Mongos Router + Backend
 
 ## 📋 Mục Lục
 
@@ -130,20 +132,15 @@ sudo apt update
 sudo apt install -y mongodb-org
 ```
 
-### 3.3. Cấu Hình MongoDB Shard A
+### 3.3. Cấu Hình MongoDB Shard A (Đơn Giản)
 
 ```bash
 # Tạo thư mục data
 sudo mkdir -p /data/shard-a
 sudo chown -R mongodb:mongodb /data/shard-a
 
-# Tạo file config
-sudo nano /etc/mongod-shard-a.conf
-```
-
-**Nội dung file `/etc/mongod-shard-a.conf`:**
-```yaml
-# MongoDB Shard A Configuration
+# Tạo file config (copy-paste toàn bộ)
+sudo tee /etc/mongod-shard-a.conf > /dev/null <<EOF
 storage:
   dbPath: /data/shard-a
   journal:
@@ -156,7 +153,7 @@ systemLog:
 
 net:
   port: 27017
-  bindIp: 0.0.0.0  # Listen on all interfaces
+  bindIp: 0.0.0.0
 
 processManagement:
   fork: true
@@ -167,19 +164,14 @@ sharding:
 
 replication:
   replSetName: shard-a-rs
+EOF
 ```
 
-**Lưu file:** Ctrl + O → Enter → Ctrl + X
-
-### 3.4. Tạo Systemd Service
+### 3.4. Tạo Systemd Service (Copy-Paste)
 
 ```bash
-# Tạo service file
-sudo nano /etc/systemd/system/mongod-shard-a.service
-```
-
-**Nội dung:**
-```ini
+# Tạo service file (copy-paste toàn bộ)
+sudo tee /etc/systemd/system/mongod-shard-a.service > /dev/null <<EOF
 [Unit]
 Description=MongoDB Shard A
 After=network.target
@@ -188,48 +180,31 @@ After=network.target
 User=mongodb
 Group=mongodb
 ExecStart=/usr/bin/mongod --config /etc/mongod-shard-a.conf
-ExecReload=/bin/kill -s HUP $MAINPID
+ExecReload=/bin/kill -s HUP \$MAINPID
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-```
+EOF
 
-**Lưu file và enable service:**
-```bash
-# Reload systemd
+# Enable và start service
 sudo systemctl daemon-reload
-
-# Start service
-sudo systemctl start mongod-shard-a
-
-# Enable auto-start
 sudo systemctl enable mongod-shard-a
+sudo systemctl start mongod-shard-a
 
 # Check status
 sudo systemctl status mongod-shard-a
 ```
 
-### 3.5. Initialize Replica Set
+### 3.5. Initialize Replica Set (1 Lệnh)
 
 ```bash
-# Connect to MongoDB
-mongosh --port 27017
-
-# Trong mongosh:
-rs.initiate({
-  _id: "shard-a-rs",
-  members: [
-    { _id: 0, host: "localhost:27017" }
-  ]
-})
+# Initialize replica set (copy-paste)
+mongosh --port 27017 --eval 'rs.initiate({_id: "shard-a-rs", members: [{_id: 0, host: "localhost:27017"}]})'
 
 # Verify
-rs.status()
-
-# Exit
-exit
+mongosh --port 27017 --eval 'rs.status()'
 ```
 
 ### 3.6. Verify Shard A
@@ -263,31 +238,21 @@ sudo apt upgrade -y
 ### 4.2. Cài Đặt MongoDB
 
 ```bash
-# Import MongoDB public GPG key
-wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | sudo apt-key add -
-
-# Add MongoDB repository
-echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-
-# Update và cài đặt
-sudo apt update
-sudo apt install -y mongodb-org
+# Cài đặt MongoDB (copy-paste)
+curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+sudo apt-get update
+sudo apt-get install -y mongodb-org
 ```
 
 ### 4.3. Cấu Hình MongoDB Shard B
 
 ```bash
-# Tạo thư mục data
+# Tạo thư mục và config (copy-paste)
 sudo mkdir -p /data/shard-b
 sudo chown -R mongodb:mongodb /data/shard-b
 
-# Tạo file config
-sudo nano /etc/mongod-shard-b.conf
-```
-
-**Nội dung file `/etc/mongod-shard-b.conf`:**
-```yaml
-# MongoDB Shard B Configuration
+sudo tee /etc/mongod-shard-b.conf > /dev/null <<EOF
 storage:
   dbPath: /data/shard-b
   journal:
@@ -311,19 +276,14 @@ sharding:
 
 replication:
   replSetName: shard-b-rs
+EOF
 ```
-
-**Lưu file:** Ctrl + O → Enter → Ctrl + X
 
 ### 4.4. Tạo Systemd Service
 
 ```bash
-# Tạo service file
-sudo nano /etc/systemd/system/mongod-shard-b.service
-```
-
-**Nội dung:**
-```ini
+# Tạo service (copy-paste)
+sudo tee /etc/systemd/system/mongod-shard-b.service > /dev/null <<EOF
 [Unit]
 Description=MongoDB Shard B
 After=network.target
@@ -332,48 +292,26 @@ After=network.target
 User=mongodb
 Group=mongodb
 ExecStart=/usr/bin/mongod --config /etc/mongod-shard-b.conf
-ExecReload=/bin/kill -s HUP $MAINPID
+ExecReload=/bin/kill -s HUP \$MAINPID
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-```
+EOF
 
-**Lưu file và enable service:**
-```bash
-# Reload systemd
 sudo systemctl daemon-reload
-
-# Start service
-sudo systemctl start mongod-shard-b
-
-# Enable auto-start
 sudo systemctl enable mongod-shard-b
-
-# Check status
+sudo systemctl start mongod-shard-b
 sudo systemctl status mongod-shard-b
 ```
 
 ### 4.5. Initialize Replica Set
 
 ```bash
-# Connect to MongoDB
-mongosh --port 27017
-
-# Trong mongosh:
-rs.initiate({
-  _id: "shard-b-rs",
-  members: [
-    { _id: 0, host: "localhost:27017" }
-  ]
-})
-
-# Verify
-rs.status()
-
-# Exit
-exit
+# Initialize (copy-paste)
+mongosh --port 27017 --eval 'rs.initiate({_id: "shard-b-rs", members: [{_id: 0, host: "localhost:27017"}]})'
+mongosh --port 27017 --eval 'rs.status()'
 ```
 
 ### 4.6. Verify Shard B
@@ -406,31 +344,21 @@ sudo apt upgrade -y
 ### 5.2. Cài Đặt MongoDB
 
 ```bash
-# Import MongoDB public GPG key
-wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | sudo apt-key add -
-
-# Add MongoDB repository
-echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-
-# Update và cài đặt
-sudo apt update
-sudo apt install -y mongodb-org
+# Cài đặt MongoDB (copy-paste)
+curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+sudo apt-get update
+sudo apt-get install -y mongodb-org
 ```
 
 ### 5.3. Cấu Hình MongoDB Shard C
 
 ```bash
-# Tạo thư mục data
+# Tạo thư mục và config (copy-paste)
 sudo mkdir -p /data/shard-c
 sudo chown -R mongodb:mongodb /data/shard-c
 
-# Tạo file config
-sudo nano /etc/mongod-shard-c.conf
-```
-
-**Nội dung file `/etc/mongod-shard-c.conf`:**
-```yaml
-# MongoDB Shard C Configuration
+sudo tee /etc/mongod-shard-c.conf > /dev/null <<EOF
 storage:
   dbPath: /data/shard-c
   journal:
@@ -454,19 +382,14 @@ sharding:
 
 replication:
   replSetName: shard-c-rs
+EOF
 ```
-
-**Lưu file:** Ctrl + O → Enter → Ctrl + X
 
 ### 5.4. Tạo Systemd Service
 
 ```bash
-# Tạo service file
-sudo nano /etc/systemd/system/mongod-shard-c.service
-```
-
-**Nội dung:**
-```ini
+# Tạo service (copy-paste)
+sudo tee /etc/systemd/system/mongod-shard-c.service > /dev/null <<EOF
 [Unit]
 Description=MongoDB Shard C
 After=network.target
@@ -475,48 +398,26 @@ After=network.target
 User=mongodb
 Group=mongodb
 ExecStart=/usr/bin/mongod --config /etc/mongod-shard-c.conf
-ExecReload=/bin/kill -s HUP $MAINPID
+ExecReload=/bin/kill -s HUP \$MAINPID
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-```
+EOF
 
-**Lưu file và enable service:**
-```bash
-# Reload systemd
 sudo systemctl daemon-reload
-
-# Start service
-sudo systemctl start mongod-shard-c
-
-# Enable auto-start
 sudo systemctl enable mongod-shard-c
-
-# Check status
+sudo systemctl start mongod-shard-c
 sudo systemctl status mongod-shard-c
 ```
 
 ### 5.5. Initialize Replica Set
 
 ```bash
-# Connect to MongoDB
-mongosh --port 27017
-
-# Trong mongosh:
-rs.initiate({
-  _id: "shard-c-rs",
-  members: [
-    { _id: 0, host: "localhost:27017" }
-  ]
-})
-
-# Verify
-rs.status()
-
-# Exit
-exit
+# Initialize (copy-paste)
+mongosh --port 27017 --eval 'rs.initiate({_id: "shard-c-rs", members: [{_id: 0, host: "localhost:27017"}]})'
+mongosh --port 27017 --eval 'rs.status()'
 ```
 
 ### 5.6. Verify Shard C
@@ -549,31 +450,21 @@ sudo apt upgrade -y
 ### 6.2. Cài Đặt MongoDB
 
 ```bash
-# Import MongoDB public GPG key
-wget -qO - https://www.mongodb.org/static/pgp/server-7.0.asc | sudo apt-key add -
-
-# Add MongoDB repository
-echo "deb [ arch=amd64,arm64 ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
-
-# Update và cài đặt
-sudo apt update
-sudo apt install -y mongodb-org
+# Cài đặt MongoDB (copy-paste)
+curl -fsSL https://www.mongodb.org/static/pgp/server-7.0.asc | sudo gpg -o /usr/share/keyrings/mongodb-server-7.0.gpg --dearmor
+echo "deb [ arch=amd64,arm64 signed-by=/usr/share/keyrings/mongodb-server-7.0.gpg ] https://repo.mongodb.org/apt/ubuntu jammy/mongodb-org/7.0 multiverse" | sudo tee /etc/apt/sources.list.d/mongodb-org-7.0.list
+sudo apt-get update
+sudo apt-get install -y mongodb-org
 ```
 
 ### 6.3. Cấu Hình Config Server
 
 ```bash
-# Tạo thư mục data
+# Tạo thư mục và config (copy-paste)
 sudo mkdir -p /data/config-server
 sudo chown -R mongodb:mongodb /data/config-server
 
-# Tạo file config
-sudo nano /etc/mongod-config.conf
-```
-
-**Nội dung file `/etc/mongod-config.conf`:**
-```yaml
-# MongoDB Config Server Configuration
+sudo tee /etc/mongod-config.conf > /dev/null <<EOF
 storage:
   dbPath: /data/config-server
   journal:
@@ -597,19 +488,14 @@ sharding:
 
 replication:
   replSetName: config-rs
+EOF
 ```
-
-**Lưu file:** Ctrl + O → Enter → Ctrl + X
 
 ### 6.4. Tạo Systemd Service cho Config Server
 
 ```bash
-# Tạo service file
-sudo nano /etc/systemd/system/mongod-config.service
-```
-
-**Nội dung:**
-```ini
+# Tạo service (copy-paste)
+sudo tee /etc/systemd/system/mongod-config.service > /dev/null <<EOF
 [Unit]
 Description=MongoDB Config Server
 After=network.target
@@ -618,66 +504,38 @@ After=network.target
 User=mongodb
 Group=mongodb
 ExecStart=/usr/bin/mongod --config /etc/mongod-config.conf
-ExecReload=/bin/kill -s HUP $MAINPID
+ExecReload=/bin/kill -s HUP \$MAINPID
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-```
+EOF
 
-**Lưu file và enable service:**
-```bash
-# Reload systemd
 sudo systemctl daemon-reload
-
-# Start service
-sudo systemctl start mongod-config
-
-# Enable auto-start
 sudo systemctl enable mongod-config
-
-# Check status
+sudo systemctl start mongod-config
 sudo systemctl status mongod-config
 ```
 
 ### 6.5. Initialize Config Server Replica Set
 
 ```bash
-# Connect to Config Server
-mongosh --port 27019
-
-# Trong mongosh:
-rs.initiate({
-  _id: "config-rs",
-  configsvr: true,
-  members: [
-    { _id: 0, host: "localhost:27019" }
-  ]
-})
-
-# Verify
-rs.status()
-
-# Exit
-exit
+# Initialize (copy-paste)
+mongosh --port 27019 --eval 'rs.initiate({_id: "config-rs", configsvr: true, members: [{_id: 0, host: "localhost:27019"}]})'
+mongosh --port 27019 --eval 'rs.status()'
 ```
 
 ### 6.6. Cấu Hình Mongos Router
 
-**Lấy IP của 3 shards:**
+**Lấy IP của 3 shards (thay vào lệnh dưới):**
 - EC2 A IP: `54.xxx.xxx.1` (ví dụ)
 - EC2 B IP: `54.xxx.xxx.2`
 - EC2 C IP: `54.xxx.xxx.3`
 
 ```bash
-# Tạo file config cho Mongos
-sudo nano /etc/mongos.conf
-```
-
-**Nội dung file `/etc/mongos.conf`** (thay IP thực tế):
-```yaml
-# Mongos Router Configuration
+# Tạo config cho Mongos (copy-paste)
+sudo tee /etc/mongos.conf > /dev/null <<EOF
 systemLog:
   destination: file
   logAppend: true
@@ -693,19 +551,14 @@ processManagement:
 
 sharding:
   configDB: config-rs/localhost:27019
+EOF
 ```
-
-**Lưu file:** Ctrl + O → Enter → Ctrl + X
 
 ### 6.7. Tạo Systemd Service cho Mongos
 
 ```bash
-# Tạo service file
-sudo nano /etc/systemd/system/mongos.service
-```
-
-**Nội dung:**
-```ini
+# Tạo service (copy-paste)
+sudo tee /etc/systemd/system/mongos.service > /dev/null <<EOF
 [Unit]
 Description=MongoDB Mongos Router
 After=network.target mongod-config.service
@@ -715,26 +568,17 @@ Requires=mongod-config.service
 User=mongodb
 Group=mongodb
 ExecStart=/usr/bin/mongos --config /etc/mongos.conf
-ExecReload=/bin/kill -s HUP $MAINPID
+ExecReload=/bin/kill -s HUP \$MAINPID
 Restart=always
 RestartSec=10
 
 [Install]
 WantedBy=multi-user.target
-```
+EOF
 
-**Lưu file và enable service:**
-```bash
-# Reload systemd
 sudo systemctl daemon-reload
-
-# Start service
-sudo systemctl start mongos
-
-# Enable auto-start
 sudo systemctl enable mongos
-
-# Check status
+sudo systemctl start mongos
 sudo systemctl status mongos
 ```
 

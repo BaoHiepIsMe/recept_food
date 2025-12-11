@@ -25,7 +25,14 @@ export default function Home() {
 
   useEffect(() => {
     fetchRecipes();
-  }, []);
+    
+    // Real-time polling: refresh every 3 seconds
+    const interval = setInterval(() => {
+      fetchRecipes(search);
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, [search]);
 
   const handleSearch = (e) => {
     e.preventDefault();

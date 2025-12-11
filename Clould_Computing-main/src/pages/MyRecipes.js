@@ -25,6 +25,13 @@ export default function MyRecipes() {
       return;
     }
     fetchMyRecipes();
+    
+    // Real-time polling: refresh every 3 seconds
+    const interval = setInterval(() => {
+      fetchMyRecipes();
+    }, 3000);
+    
+    return () => clearInterval(interval);
   }, [user]);
 
   const fetchMyRecipes = async () => {

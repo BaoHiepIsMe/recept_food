@@ -22,6 +22,12 @@ app.use((req, res, next) => {
   next();
 });
 
+// Add Server ID to all responses
+app.use((req, res, next) => {
+  res.setHeader('X-Server-ID', SERVER_ID);
+  next();
+});
+
 // Connect to MongoDB
 connectDB();
 

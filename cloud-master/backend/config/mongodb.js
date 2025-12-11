@@ -20,6 +20,10 @@ const connectDB = async () => {
       // For sharded clusters, these options help with connection stability
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
+      // Fix read preference for single-member replica sets (config-rs)
+      readPreference: 'primary',
+      // Set read preference mode for all operations
+      readPreferenceSecondary: false,
     });
     
     // Detect if connected to sharded cluster

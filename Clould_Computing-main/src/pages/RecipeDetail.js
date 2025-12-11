@@ -158,6 +158,17 @@ export default function RecipeDetail() {
     fetchRecipe();
     fetchComments();
     checkFavorite();
+    
+    // Real-time polling: refresh every 3 seconds
+    const interval = setInterval(() => {
+      fetchRecipe();
+      fetchComments();
+      if (user) {
+        checkFavorite();
+      }
+    }, 3000);
+    
+    return () => clearInterval(interval);
   }, [id, user]);
 
   const fetchRecipe = async () => {

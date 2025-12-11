@@ -15,13 +15,13 @@ export default function Notifications() {
     if (user) {
       fetchNotifications();
       fetchUnreadCount();
-      // Poll for new notifications every 30 seconds
+      // Real-time polling: refresh every 3 seconds
       const interval = setInterval(() => {
         fetchUnreadCount();
         if (showDropdown) {
           fetchNotifications();
         }
-      }, 30000);
+      }, 3000);
       return () => clearInterval(interval);
     }
   }, [user, showDropdown]);

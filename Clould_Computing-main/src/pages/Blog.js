@@ -170,7 +170,20 @@ export default function Blog() {
     }
     fetchBlogs();
     fetchRecipes();
-  }, [user]);
+    
+    // Real-time polling: refresh blogs every 3 seconds
+    const interval = setInterval(() => {
+      fetchBlogs();
+      // Refresh comments for open blogs
+      Object.keys(showComments).forEach(blogId => {
+        if (showComments[blogId]) {
+          fetchBlogComments(blogId);
+        }
+      });
+    }, 3000);
+    
+    return () => clearInterval(interval);
+  }, [user, showComments]);
 
   const fetchBlogs = async () => {
     try {
