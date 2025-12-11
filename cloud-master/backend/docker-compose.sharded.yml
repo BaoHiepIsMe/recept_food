@@ -1,0 +1,120 @@
+version: '3.8'
+
+services:
+  # Shard A
+  shard-a:
+    image: mongo:7.0
+    container_name: mongodb-shard-a
+    command: mongod --shardsvr --replSet shardA --port 27018 --bind_ip_all
+    ports:
+      - "27018:27018"
+    volumes:
+      - shard-a-data:/data/db
+    networks:
+      - mongodb-cluster
+
+  # Shard B
+  shard-b:
+    image: mongo:7.0
+    container_name: mongodb-shard-b
+    command: mongod --shardsvr --replSet shardB --port 27018 --bind_ip_all
+    ports:
+      - "27019:27018"
+    volumes:
+      - shard-b-data:/data/db
+    networks:
+      - mongodb-cluster
+
+  # Shard C
+  shard-c:
+    image: mongo:7.0
+    container_name: mongodb-shard-c
+    command: mongod --shardsvr --replSet shardC --port 27018 --bind_ip_all
+    ports:
+      - "27020:27018"
+    volumes:
+      - shard-c-data:/data/db
+    networks:
+      - mongodb-cluster
+
+  # Config Server
+  config-server:
+    image: mongo:7.0
+    container_name: mongodb-config
+    command: mongod --configsvr --replSet configReplSet --port 27019 --bind_ip_all
+    ports:
+      - "27021:27019"
+    volumes:
+      - config-data:/data/db
+    networks:
+      - mongodb-cluster
+
+  # Mongos Router
+  mongos:
+    image: mongo:7.0
+    container_name: mongodb-mongos
+    command: mongos --configdb configReplSet/config-server:27019 --bind_ip_all --port 27017
+    ports:
+      - "27017:27017"
+    depends_on:
+      - config-server
+      - shard-a
+      - shard-b
+      - shard-c
+    networks:
+      - mongodb-cluster
+
+  # Setup script (runs once)
+  setup:
+    image: mongo:7.0
+    container_name: mongodb-setup
+    depends_on:
+      - shard-a
+      - shard-b
+      - shard-c
+      - config-server
+      - mongos
+    volumes:
+      - ./scripts:/scripts
+    networks:
+      - mongodb-cluster
+    command: >
+      bash -c "
+        echo 'Waiting for services to be ready...';
+        sleep 30;
+        
+        echo 'Initializing shard replicas...';
+        mongosh --host shard-a:27018 --eval 'rs.initiate({_id:\"shardA\",members:[{_id:0,host:\"shard-a:27018\"}]})';
+        mongosh --host shard-b:27018 --eval 'rs.initiate({_id:\"shardB\",members:[{_id:0,host:\"shard-b:27018\"}]})';
+        mongosh --host shard-c:27018 --eval 'rs.initiate({_id:\"shardC\",members:[{_id:0,host:\"shard-c:27018\"}]})';
+        
+        echo 'Initializing config replica set...';
+        mongosh --host config-server:27019 --eval 'rs.initiate({_id:\"configReplSet\",configsvr:true,members:[{_id:0,host:\"config-server:27019\"}]})';
+        
+        sleep 10;
+        
+        echo 'Adding shards to cluster...';
+        mongosh --host mongos:27017 --eval 'sh.addShard(\"shardA/shard-a:27018\")';
+        mongosh --host mongos:27017 --eval 'sh.addShard(\"shardB/shard-b:27018\")';
+        mongosh --host mongos:27017 --eval 'sh.addShard(\"shardC/shard-c:27018\")';
+        
+        echo 'Enabling sharding...';
+        mongosh --host mongos:27017 --eval 'sh.enableSharding(\"recipe-share\")';
+        mongosh --host mongos:27017 --eval 'sh.shardCollection(\"recipe-share.users\", {email: 1})';
+        mongosh --host mongos:27017 --eval 'sh.shardCollection(\"recipe-share.recipes\", {authorId: 1})';
+        mongosh --host mongos:27017 --eval 'sh.shardCollection(\"recipe-share.blogs\", {authorId: 1})';
+        mongosh --host mongos:27017 --eval 'sh.shardCollection(\"recipe-share.notifications\", {userId: 1})';
+        
+        echo 'Setup complete!';
+      "
+
+volumes:
+  shard-a-data:
+  shard-b-data:
+  shard-c-data:
+  config-data:
+
+networks:
+  mongodb-cluster:
+    driver: bridge
+

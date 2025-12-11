@@ -1,6 +1,10 @@
 import express from 'express';
-import { supabase } from '../config/supabase.js';
 import { authenticate } from '../middleware/auth.js';
+import Comment from '../models/Comment.js';
+import CommentLike from '../models/CommentLike.js';
+import User from '../models/User.js';
+import Recipe from '../models/Recipe.js';
+import { createNotification } from '../utils/notifications.js';
 
 const router = express.Router({ mergeParams: true });
 
@@ -15,94 +19,76 @@ router.get('/', async (req, res) => {
       const authHeader = req.headers.authorization;
       if (authHeader && authHeader.startsWith('Bearer ')) {
         const token = authHeader.split(' ')[1];
-        const { data: { user } } = await supabase.auth.getUser(token);
-        if (user) userId = user.id;
+        const jwt = await import('jsonwebtoken');
+        const decoded = jwt.default.verify(token, process.env.JWT_SECRET);
+        userId = decoded.userId;
       }
     } catch (err) {
       // Ignore auth errors, just proceed without user
     }
     
     // Get all comments (including replies)
-    const { data: comments, error } = await supabase
-      .from('comments')
-      .select('*')
-      .eq('recipe_id', recipeId)
-      .order('created_at', { ascending: true });
-
-    if (error) {
-      console.error('Error fetching comments:', error);
-      return res.status(500).json({ message: error.message || 'Failed to fetch comments' });
-    }
-
-    // Get author info
-    const authorIds = [...new Set((comments || []).map(c => c.author_id))];
-    let authorMap = {};
-    
-    if (authorIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, name, avatar')
-        .in('id', authorIds);
-      
-      if (profiles) {
-        profiles.forEach(profile => {
-          authorMap[profile.id] = {
-            id: profile.id,
-            name: profile.name,
-            avatar: profile.avatar || ''
-          };
-        });
-      }
-    }
+    const comments = await Comment.find({ recipeId })
+      .sort({ createdAt: 1 })
+      .populate('authorId', 'name email avatar')
+      .lean();
 
     // Get comment likes
-    const commentIds = (comments || []).map(c => c.id);
+    const commentIds = comments.map(c => c._id.toString());
     let likesMap = {};
     let userLikesSet = new Set();
     
     if (commentIds.length > 0) {
-      const { data: likes } = await supabase
-        .from('comment_likes')
-        .select('comment_id, user_id')
-        .in('comment_id', commentIds);
+      const likes = await CommentLike.find({ commentId: { $in: commentIds } }).lean();
       
-      if (likes) {
-        likes.forEach(like => {
-          if (!likesMap[like.comment_id]) {
-            likesMap[like.comment_id] = [];
-          }
-          likesMap[like.comment_id].push(like.user_id);
-          if (userId && like.user_id === userId) {
-            userLikesSet.add(like.comment_id);
-          }
-        });
-      }
+      likes.forEach(like => {
+        const commentId = like.commentId.toString();
+        if (!likesMap[commentId]) {
+          likesMap[commentId] = [];
+        }
+        likesMap[commentId].push(like.userId);
+        if (userId && like.userId === userId) {
+          userLikesSet.add(commentId);
+        }
+      });
     }
 
     // Separate top-level comments and replies
-    const topLevelComments = (comments || []).filter(c => !c.parent_id);
+    const topLevelComments = comments.filter(c => !c.parentId);
     const repliesMap = {};
-    (comments || []).forEach(comment => {
-      if (comment.parent_id) {
-        if (!repliesMap[comment.parent_id]) {
-          repliesMap[comment.parent_id] = [];
+    comments.forEach(comment => {
+      if (comment.parentId) {
+        const parentId = comment.parentId.toString();
+        if (!repliesMap[parentId]) {
+          repliesMap[parentId] = [];
         }
-        repliesMap[comment.parent_id].push(comment);
+        repliesMap[parentId].push(comment);
       }
     });
 
     // Format comments with replies
-    const formatComment = (comment) => ({
-      _id: comment.id,
-      text: comment.text,
-      author_id: comment.author_id,
-      parent_id: comment.parent_id || null,
-      author: authorMap[comment.author_id] || { id: comment.author_id, name: 'Anonymous', avatar: '' },
-      likes: likesMap[comment.id]?.length || 0,
-      isLiked: userId ? userLikesSet.has(comment.id) : false,
-      createdAt: comment.created_at,
-      replies: (repliesMap[comment.id] || []).map(formatComment)
-    });
+    const formatComment = (comment) => {
+      const authorId = typeof comment.authorId === 'object' ? comment.authorId._id || comment.authorId : comment.authorId;
+      const authorName = typeof comment.authorId === 'object' ? (comment.authorId.name || 'Anonymous') : 'Anonymous';
+      const authorAvatar = typeof comment.authorId === 'object' && comment.authorId.avatar 
+        ? `/api/files/${comment.authorId.avatar}` : '';
+      
+      return {
+        _id: comment._id.toString(),
+        text: comment.text,
+        author_id: authorId,
+        parent_id: comment.parentId ? comment.parentId.toString() : null,
+        author: {
+          id: authorId,
+          name: authorName,
+          avatar: authorAvatar
+        },
+        likes: likesMap[comment._id.toString()]?.length || 0,
+        isLiked: userId ? userLikesSet.has(comment._id.toString()) : false,
+        createdAt: comment.createdAt,
+        replies: (repliesMap[comment._id.toString()] || []).map(formatComment)
+      };
+    };
 
     const formattedComments = topLevelComments.map(formatComment);
 
@@ -123,66 +109,44 @@ router.post('/', authenticate, async (req, res) => {
       return res.status(400).json({ message: 'Comment text is required' });
     }
 
-    // Use authenticated client for insert (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
     const commentData = {
-      recipe_id: recipeId,
-      author_id: req.user.id,
+      recipeId,
+      authorId: req.user.id,
       text: text.trim()
     };
 
     if (parentId) {
-      commentData.parent_id = parentId;
+      commentData.parentId = parentId;
     }
 
-    const { data: comment, error } = await authClient
-      .from('comments')
-      .insert(commentData)
-      .select('*')
-      .single();
+    const comment = new Comment(commentData);
+    await comment.save();
 
-    if (error) {
-      console.error('Error creating comment:', error);
-      return res.status(400).json({ message: error.message || 'Failed to create comment' });
-    }
+    // Populate author
+    await comment.populate('authorId', 'name email avatar');
 
-    // Get author info
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('id, name, avatar')
-      .eq('id', req.user.id)
-      .single();
-
+    const user = await User.findById(req.user.id).lean();
     const formattedComment = {
-      _id: comment.id,
+      _id: comment._id.toString(),
       text: comment.text,
-      author_id: comment.author_id,
-      parent_id: comment.parent_id || null,
-      author: profile ? {
-        id: profile.id,
-        name: profile.name,
-        avatar: profile.avatar || ''
+      author_id: comment.authorId,
+      parent_id: comment.parentId ? comment.parentId.toString() : null,
+      author: user ? {
+        id: user._id,
+        name: user.name || 'Anonymous',
+        avatar: user.avatar ? `/api/files/${user.avatar}` : ''
       } : { id: req.user.id, name: req.user.name || 'Anonymous', avatar: '' },
       likes: 0,
       isLiked: false,
-      createdAt: comment.created_at,
+      createdAt: comment.createdAt,
       replies: []
     };
 
     // Create notification for recipe owner
-    if (comment.recipe_id) {
-      const { data: recipe } = await supabase
-        .from('recipes')
-        .select('author_id')
-        .eq('id', comment.recipe_id)
-        .single();
-
-      if (recipe && recipe.author_id) {
-        const { createNotification } = await import('../utils/notifications.js');
-        await createNotification(recipe.author_id, req.user.id, 'recipe_comment', 'recipe', comment.recipe_id);
+    if (comment.recipeId) {
+      const recipe = await Recipe.findById(comment.recipeId).lean();
+      if (recipe && recipe.authorId && recipe.authorId !== req.user.id) {
+        await createNotification(recipe.authorId, req.user.id, 'recipe_comment', 'recipe', comment.recipeId.toString());
       }
     }
 
@@ -199,34 +163,16 @@ router.delete('/:commentId', authenticate, async (req, res) => {
     const commentId = req.params.commentId;
 
     // Check if comment exists and user owns it
-    const { data: comment, error: checkError } = await supabase
-      .from('comments')
-      .select('*')
-      .eq('id', commentId)
-      .single();
-
-    if (checkError || !comment) {
+    const comment = await Comment.findById(commentId);
+    if (!comment) {
       return res.status(404).json({ message: 'Comment not found' });
     }
 
-    if (comment.author_id !== req.user.id) {
+    if (comment.authorId !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    // Use authenticated client for delete (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
-    const { error } = await authClient
-      .from('comments')
-      .delete()
-      .eq('id', commentId);
-
-    if (error) {
-      console.error('Error deleting comment:', error);
-      return res.status(500).json({ message: error.message || 'Failed to delete comment' });
-    }
+    await Comment.findByIdAndDelete(commentId);
 
     res.json({ message: 'Comment deleted' });
   } catch (error) {
@@ -242,49 +188,24 @@ router.post('/:commentId/like', authenticate, async (req, res) => {
     const userId = req.user.id;
 
     // Check if like already exists
-    const { data: existing, error: checkError } = await supabase
-      .from('comment_likes')
-      .select('id')
-      .eq('comment_id', commentId)
-      .eq('user_id', userId)
-      .maybeSingle();
-
-    // Use authenticated client (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
+    const existing = await CommentLike.findOne({ commentId, userId });
 
     if (existing) {
       // Unlike
-      const { error } = await authClient
-        .from('comment_likes')
-        .delete()
-        .eq('comment_id', commentId)
-        .eq('user_id', userId);
-
-      if (error) throw error;
+      await CommentLike.findByIdAndDelete(existing._id);
       res.json({ message: 'Comment unliked', isLiked: false });
     } else {
       // Like
-      const { error } = await authClient
-        .from('comment_likes')
-        .insert({ comment_id: commentId, user_id: userId });
-
-      if (error) throw error;
+      const commentLike = new CommentLike({ commentId, userId });
+      await commentLike.save();
 
       // Create notification for comment owner
-      const { data: comment } = await supabase
-        .from('comments')
-        .select('author_id, recipe_id, blog_id')
-        .eq('id', commentId)
-        .single();
-
-      if (comment && comment.author_id) {
-        const { createNotification } = await import('../utils/notifications.js');
-        if (comment.recipe_id) {
-          await createNotification(comment.author_id, userId, 'recipe_comment', 'recipe', comment.recipe_id);
-        } else if (comment.blog_id) {
-          await createNotification(comment.author_id, userId, 'blog_comment', 'blog', comment.blog_id);
+      const comment = await Comment.findById(commentId).lean();
+      if (comment && comment.authorId && comment.authorId !== userId) {
+        if (comment.recipeId) {
+          await createNotification(comment.authorId, userId, 'comment_like', 'recipe', comment.recipeId.toString());
+        } else if (comment.blogId) {
+          await createNotification(comment.authorId, userId, 'comment_like', 'blog', comment.blogId.toString());
         }
       }
 
@@ -297,4 +218,3 @@ router.post('/:commentId/like', authenticate, async (req, res) => {
 });
 
 export default router;
-

@@ -1,4 +1,5 @@
-import { supabase } from '../config/supabase.js';
+import jwt from 'jsonwebtoken';
+import User from '../models/User.js';
 
 export const authenticate = async (req, res, next) => {
   try {
@@ -8,32 +9,33 @@ export const authenticate = async (req, res, next) => {
       return res.status(401).json({ message: 'No token provided' });
     }
 
-    // Verify token with Supabase
-    const { data: { user }, error } = await supabase.auth.getUser(token);
+    // Verify JWT token
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
     
-    if (error || !user) {
-      return res.status(401).json({ message: 'Invalid token' });
-    }
-
-    // Get user profile
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', user.id)
-      .single();
-
-    if (profileError) {
-      return res.status(401).json({ message: 'User profile not found' });
+    // Get user from MongoDB
+    const user = await User.findById(decoded.userId).select('-password');
+    
+    if (!user) {
+      return res.status(401).json({ message: 'User not found' });
     }
 
     req.user = {
-      id: user.id,
+      id: user._id,
       email: user.email,
-      ...profile
+      name: user.name,
+      avatar: user.avatar,
+      bio: user.bio
     };
     
     next();
   } catch (error) {
+    if (error.name === 'JsonWebTokenError') {
+      return res.status(401).json({ message: 'Invalid token' });
+    }
+    if (error.name === 'TokenExpiredError') {
+      return res.status(401).json({ message: 'Token expired' });
+    }
+    console.error('Auth middleware error:', error);
     res.status(401).json({ message: 'Invalid token' });
   }
 };

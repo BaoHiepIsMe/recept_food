@@ -1,6 +1,7 @@
 import express from 'express';
-import { supabase } from '../config/supabase.js';
 import { authenticate } from '../middleware/auth.js';
+import Notification from '../models/Notification.js';
+import User from '../models/User.js';
 
 const router = express.Router();
 
@@ -9,53 +10,38 @@ router.get('/', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Use authenticated client (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
-    const { data: notifications, error } = await authClient
-      .from('notifications')
-      .select('*')
-      .eq('user_id', userId)
-      .order('created_at', { ascending: false })
-      .limit(50);
-
-    if (error) {
-      console.error('Error fetching notifications:', error);
-      return res.status(500).json({ message: error.message || 'Failed to fetch notifications' });
-    }
+    const notifications = await Notification.find({ userId })
+      .sort({ createdAt: -1 })
+      .limit(50)
+      .lean();
 
     // Get actor profiles
-    const actorIds = [...new Set((notifications || []).map(n => n.actor_id))];
+    const actorIds = [...new Set(notifications.map(n => n.actorId))];
     let actorMap = {};
     
     if (actorIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, name, avatar')
-        .in('id', actorIds);
+      const actors = await User.find({ _id: { $in: actorIds } })
+        .select('_id name email avatar')
+        .lean();
       
-      if (profiles) {
-        profiles.forEach(profile => {
-          actorMap[profile.id] = {
-            id: profile.id,
-            name: profile.name,
-            avatar: profile.avatar || ''
-          };
-        });
-      }
+      actors.forEach(actor => {
+        actorMap[actor._id] = {
+          id: actor._id,
+          name: actor.name || 'Someone',
+          avatar: actor.avatar ? `/api/files/${actor.avatar}` : ''
+        };
+      });
     }
 
     // Format notifications
-    const formattedNotifications = (notifications || []).map(notif => ({
-      _id: notif.id,
+    const formattedNotifications = notifications.map(notif => ({
+      _id: notif._id.toString(),
       type: notif.type,
-      targetType: notif.target_type,
-      targetId: notif.target_id,
-      actor: actorMap[notif.actor_id] || { id: notif.actor_id, name: 'Someone', avatar: '' },
+      targetType: notif.targetType,
+      targetId: notif.targetId.toString ? notif.targetId.toString() : notif.targetId,
+      actor: actorMap[notif.actorId] || { id: notif.actorId, name: 'Someone', avatar: '' },
       read: notif.read,
-      createdAt: notif.created_at
+      createdAt: notif.createdAt
     }));
 
     res.json(formattedNotifications);
@@ -70,21 +56,10 @@ router.get('/unread-count', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Use authenticated client (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
-    const { count, error } = await authClient
-      .from('notifications')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId)
-      .eq('read', false);
-
-    if (error) {
-      console.error('Error fetching unread count:', error);
-      return res.status(500).json({ message: error.message || 'Failed to fetch unread count' });
-    }
+    const count = await Notification.countDocuments({ 
+      userId, 
+      read: false 
+    });
 
     res.json({ count: count || 0 });
   } catch (error) {
@@ -99,33 +74,19 @@ router.put('/:id/read', authenticate, async (req, res) => {
     const notificationId = req.params.id;
     const userId = req.user.id;
 
-    // Use authenticated client (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
     // Check if notification belongs to user
-    const { data: notif, error: checkError } = await authClient
-      .from('notifications')
-      .select('*')
-      .eq('id', notificationId)
-      .eq('user_id', userId)
-      .single();
+    const notif = await Notification.findOne({ 
+      _id: notificationId, 
+      userId 
+    });
 
-    if (checkError || !notif) {
+    if (!notif) {
       return res.status(404).json({ message: 'Notification not found' });
     }
 
     // Update to read
-    const { error } = await authClient
-      .from('notifications')
-      .update({ read: true })
-      .eq('id', notificationId);
-
-    if (error) {
-      console.error('Error marking notification as read:', error);
-      return res.status(500).json({ message: error.message || 'Failed to mark as read' });
-    }
+    notif.read = true;
+    await notif.save();
 
     res.json({ message: 'Notification marked as read' });
   } catch (error) {
@@ -139,21 +100,10 @@ router.put('/read-all', authenticate, async (req, res) => {
   try {
     const userId = req.user.id;
 
-    // Use authenticated client (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
-    const { error } = await authClient
-      .from('notifications')
-      .update({ read: true })
-      .eq('user_id', userId)
-      .eq('read', false);
-
-    if (error) {
-      console.error('Error marking all as read:', error);
-      return res.status(500).json({ message: error.message || 'Failed to mark all as read' });
-    }
+    await Notification.updateMany(
+      { userId, read: false },
+      { read: true }
+    );
 
     res.json({ message: 'All notifications marked as read' });
   } catch (error) {
@@ -163,4 +113,3 @@ router.put('/read-all', authenticate, async (req, res) => {
 });
 
 export default router;
-

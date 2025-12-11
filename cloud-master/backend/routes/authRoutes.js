@@ -1,175 +1,75 @@
 import express from 'express';
-import { supabase } from '../config/supabase.js';
+import bcrypt from 'bcryptjs';
+import jwt from 'jsonwebtoken';
 import { authenticate } from '../middleware/auth.js';
+import User from '../models/User.js';
 import multer from 'multer';
-import path from 'path';
-import fs from 'fs';
+import { uploadToGridFS } from '../utils/gridfs.js';
 
 const router = express.Router();
 
-// Configure multer for file uploads (temporary storage before uploading to Supabase)
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = 'uploads/';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname));
-  }
-});
-
-const upload = multer({ storage });
-
-// Helper function to upload file to Supabase Storage
-const uploadToSupabase = async (file, folder = 'avatars', userToken = null) => {
-  try {
-    const fileExt = path.extname(file.originalname);
-    const fileName = `${Date.now()}${fileExt}`;
-    const filePath = `${folder}/${fileName}`;
-
-    const fileBuffer = fs.readFileSync(file.path);
-    
-    // Use authenticated client if token provided
-    let client = supabase;
-    if (userToken) {
-      const { getAuthClient } = await import('../config/supabase.js');
-      client = getAuthClient(userToken);
-    }
-    
-    const { data, error } = await client.storage
-      .from('recipe-share')
-      .upload(filePath, fileBuffer, {
-        contentType: file.mimetype,
-        upsert: false
-      });
-
-    // Delete local file
-    fs.unlinkSync(file.path);
-
-    if (error) throw error;
-
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('recipe-share')
-      .getPublicUrl(filePath);
-
-    return publicUrl;
-  } catch (error) {
-    // Clean up local file if upload fails
-    if (fs.existsSync(file.path)) {
-      fs.unlinkSync(file.path);
-    }
-    throw error;
-  }
-};
+// Use memory storage for multer (better for GridFS)
+const upload = multer({ storage: multer.memoryStorage() });
 
 // Register
-router.post('/register', async (req, res) => {
+router.post('/register', upload.single('avatar'), async (req, res) => {
   try {
     const { name, email, password } = req.body;
     
     if (!name || !email || !password) {
-      return res.status(400).json({ message: 'Name, email and password are required' });
+      return res.status(400).json({ message: 'Name, email, and password are required' });
     }
 
-    // Sign up with Supabase Auth
-    const { data: authData, error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: {
-          name: name
-        },
-        emailRedirectTo: undefined // Disable email confirmation for now
+    // Check if user exists
+    const existingUser = await User.findById(email);
+    if (existingUser) {
+      return res.status(400).json({ message: 'User already exists' });
+    }
+
+    // Hash password
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Upload avatar if provided
+    let avatarFileId = '';
+    if (req.file) {
+      try {
+        avatarFileId = await uploadToGridFS(req.file, 'avatars');
+      } catch (error) {
+        console.error('Avatar upload error:', error);
+        return res.status(400).json({ message: 'Failed to upload avatar: ' + error.message });
       }
+    }
+
+    // Create user (use email as _id for sharding)
+    const user = new User({
+      _id: email,
+      name,
+      email,
+      password: hashedPassword,
+      avatar: avatarFileId
     });
 
-    if (authError) {
-      console.error('Supabase signup error:', authError);
-      return res.status(400).json({ message: authError.message });
-    }
+    await user.save();
 
-    if (!authData.user) {
-      return res.status(400).json({ message: 'Failed to create user' });
-    }
-
-    // Wait a bit for trigger to create profile
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // Check if profile exists, if not create it manually
-    let { data: profile } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', authData.user.id)
-      .single();
-
-    if (!profile) {
-      // Create profile manually if trigger didn't work
-      const { data: newProfile, error: profileError } = await supabase
-        .from('profiles')
-        .insert({
-          id: authData.user.id,
-          name: name,
-          email: email
-        })
-        .select()
-        .single();
-
-      if (profileError) {
-        console.error('Profile creation error:', profileError);
-        // Continue anyway, profile might be created by trigger later
-      } else {
-        profile = newProfile;
-      }
-    }
-
-    // Try to get session - if email confirmation is required, session might be null
-    let session = authData.session;
-    
-    if (!session) {
-      // Try to sign in to get session
-      const { data: sessionData, error: sessionError } = await supabase.auth.signInWithPassword({
-        email,
-        password
-      });
-
-      if (sessionError) {
-        console.error('Session creation error:', sessionError);
-        // If email confirmation is required, return success but no session
-        return res.status(201).json({
-          message: 'User created successfully. Please check your email to confirm your account.',
-          user: {
-            id: authData.user.id,
-            name: profile?.name || name,
-            email: authData.user.email
-          },
-          requiresEmailConfirmation: true
-        });
-      }
-
-      session = sessionData.session;
-    }
-
-    if (!session) {
-      return res.status(400).json({ 
-        message: 'Account created but session could not be established. Please try logging in.' 
-      });
-    }
+    // Generate JWT
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
 
     res.status(201).json({
-      token: session.access_token,
+      token,
       user: {
-        id: authData.user.id,
-        name: profile?.name || name,
-        email: authData.user.email
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: avatarFileId ? `/api/files/${avatarFileId}` : ''
       }
     });
   } catch (error) {
-    console.error('Register error:', error);
-    res.status(400).json({ message: error.message || 'Registration failed' });
+    console.error('Registration error:', error);
+    res.status(500).json({ message: error.message || 'Registration failed' });
   }
 });
 
@@ -182,57 +82,33 @@ router.post('/login', async (req, res) => {
       return res.status(400).json({ message: 'Email and password are required' });
     }
 
-    const { data, error } = await supabase.auth.signInWithPassword({
-      email,
-      password
-    });
-
-    if (error) {
-      console.error('Login error:', error);
-      return res.status(401).json({ message: error.message || 'Invalid credentials' });
-    }
-
-    if (!data || !data.session || !data.user) {
+    // Find user
+    const user = await User.findById(email);
+    if (!user) {
       return res.status(401).json({ message: 'Invalid credentials' });
     }
 
-    // Get profile - handle case where profile might not exist
-    let profile = null;
-    const { data: profileData, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', data.user.id)
-      .single();
-
-    if (profileError) {
-      console.log('Profile not found, creating one...');
-      // Profile doesn't exist, create it
-      const { data: newProfile, error: createError } = await supabase
-        .from('profiles')
-        .insert({
-          id: data.user.id,
-          name: data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
-          email: data.user.email
-        })
-        .select()
-        .single();
-
-      if (createError) {
-        console.error('Error creating profile:', createError);
-        // Continue anyway with default name
-      } else {
-        profile = newProfile;
-      }
-    } else {
-      profile = profileData;
+    // Check password
+    const isValid = await bcrypt.compare(password, user.password);
+    if (!isValid) {
+      return res.status(401).json({ message: 'Invalid credentials' });
     }
 
+    // Generate JWT
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '7d' }
+    );
+
     res.json({
-      token: data.session.access_token,
+      token,
       user: {
-        id: data.user.id,
-        name: profile?.name || data.user.user_metadata?.name || data.user.email?.split('@')[0] || 'User',
-        email: data.user.email
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        avatar: user.avatar ? `/api/files/${user.avatar}` : '',
+        bio: user.bio
       }
     });
   } catch (error) {
@@ -244,42 +120,33 @@ router.post('/login', async (req, res) => {
 // Get profile
 router.get('/profile', authenticate, async (req, res) => {
   try {
-    const userId = req.user.id;
-
-    // Get profile
-    const { data: profile, error: profileError } = await supabase
-      .from('profiles')
-      .select('*')
-      .eq('id', userId)
-      .single();
-
-    if (profileError) {
-      return res.status(404).json({ message: 'Profile not found' });
+    const user = await User.findById(req.user.id).select('-password');
+    
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
     }
 
     // Get counts
-    const { count: recipeCount } = await supabase
-      .from('recipes')
-      .select('*', { count: 'exact', head: true })
-      .eq('author_id', userId);
+    const Recipe = (await import('../models/Recipe.js')).default;
+    const Favorite = (await import('../models/Favorite.js')).default;
+    const Blog = (await import('../models/Blog.js')).default;
 
-    const { count: favoriteCount } = await supabase
-      .from('favorites')
-      .select('*', { count: 'exact', head: true })
-      .eq('user_id', userId);
-
-    const { count: blogCount } = await supabase
-      .from('blogs')
-      .select('*', { count: 'exact', head: true })
-      .eq('author_id', userId);
+    const recipeCount = await Recipe.countDocuments({ authorId: user._id });
+    const favoriteCount = await Favorite.countDocuments({ userId: user._id });
+    const blogCount = await Blog.countDocuments({ authorId: user._id });
 
     res.json({
-      ...profile,
-      recipeCount: recipeCount || 0,
-      favoriteCount: favoriteCount || 0,
-      blogCount: blogCount || 0
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar ? `/api/files/${user.avatar}` : '',
+      bio: user.bio,
+      recipeCount,
+      favoriteCount,
+      blogCount
     });
   } catch (error) {
+    console.error('Get profile error:', error);
     res.status(500).json({ message: error.message });
   }
 });
@@ -287,43 +154,48 @@ router.get('/profile', authenticate, async (req, res) => {
 // Update profile
 router.put('/profile', authenticate, upload.single('avatar'), async (req, res) => {
   try {
-    const userId = req.user.id;
     const { name, bio } = req.body;
-    const updateData = { name, bio };
-    
-    // Upload avatar to Supabase Storage if provided
+    const user = await User.findById(req.user.id);
+
+    if (!user) {
+      return res.status(404).json({ message: 'User not found' });
+    }
+
+    if (name) user.name = name;
+    if (bio !== undefined) user.bio = bio;
+
     if (req.file) {
       try {
-        // Get user token from request
-        const token = req.headers.authorization?.split(' ')[1];
-        const avatarUrl = await uploadToSupabase(req.file, 'avatars', token);
-        updateData.avatar = avatarUrl;
+        // Delete old avatar if exists
+        if (user.avatar) {
+          const { deleteFileFromGridFS } = await import('../utils/gridfs.js');
+          try {
+            await deleteFileFromGridFS(user.avatar);
+          } catch (err) {
+            // Ignore delete errors
+            console.log('Could not delete old avatar:', err.message);
+          }
+        }
+        
+        user.avatar = await uploadToGridFS(req.file, 'avatars');
       } catch (error) {
         console.error('Avatar upload error:', error);
-        return res.status(400).json({ message: 'Failed to upload avatar: ' + (error.message || 'Unknown error') });
+        return res.status(400).json({ message: 'Failed to upload avatar: ' + error.message });
       }
     }
 
-    // Update profile - use authenticated client
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-    
-    const { data, error } = await authClient
-      .from('profiles')
-      .update(updateData)
-      .eq('id', userId)
-      .select()
-      .single();
+    await user.save();
 
-    if (error) {
-      console.error('Error updating profile:', error);
-      return res.status(400).json({ message: error.message || 'Failed to update profile' });
-    }
-
-    res.json(data);
+    res.json({
+      id: user._id,
+      name: user.name,
+      email: user.email,
+      avatar: user.avatar ? `/api/files/${user.avatar}` : '',
+      bio: user.bio
+    });
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error('Update profile error:', error);
+    res.status(500).json({ message: error.message });
   }
 });
 

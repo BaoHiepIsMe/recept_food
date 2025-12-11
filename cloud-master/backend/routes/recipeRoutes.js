@@ -1,141 +1,56 @@
 import express from "express";
-import { supabase } from "../config/supabase.js";
 import { authenticate } from "../middleware/auth.js";
 import multer from "multer";
-import path from "path";
-import fs from "fs";
+import Recipe from "../models/Recipe.js";
+import Favorite from "../models/Favorite.js";
+import User from "../models/User.js";
+import { uploadToGridFS, deleteFileFromGridFS } from "../utils/gridfs.js";
+import { createNotification } from "../utils/notifications.js";
 import commentRoutes from "./commentRoutes.js";
 
 const router = express.Router();
 
-// Configure multer for file uploads
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    const uploadDir = 'uploads/';
-    if (!fs.existsSync(uploadDir)) {
-      fs.mkdirSync(uploadDir, { recursive: true });
-    }
-    cb(null, uploadDir);
-  },
-  filename: (req, file, cb) => {
-    cb(null, Date.now() + path.extname(file.originalname));
-  }
-});
-
-const upload = multer({ storage });
-
-// Helper function to upload file to Supabase Storage
-const uploadToSupabase = async (file, folder = 'recipes', userToken = null) => {
-  try {
-    const fileExt = path.extname(file.originalname);
-    const fileName = `${Date.now()}${fileExt}`;
-    const filePath = `${folder}/${fileName}`;
-
-    const fileBuffer = fs.readFileSync(file.path);
-    
-    // Use authenticated client if token provided, otherwise use service role
-    let client = supabase;
-    if (userToken) {
-      const { getAuthClient } = await import('../config/supabase.js');
-      client = getAuthClient(userToken);
-    }
-    
-    const { data, error } = await client.storage
-      .from('recipe-share')
-      .upload(filePath, fileBuffer, {
-        contentType: file.mimetype,
-        upsert: false
-      });
-
-    // Delete local file
-    fs.unlinkSync(file.path);
-
-    if (error) throw error;
-
-    // Get public URL
-    const { data: { publicUrl } } = supabase.storage
-      .from('recipe-share')
-      .getPublicUrl(filePath);
-
-    return publicUrl;
-  } catch (error) {
-    // Clean up local file if upload fails
-    if (fs.existsSync(file.path)) {
-      fs.unlinkSync(file.path);
-    }
-    throw error;
-  }
-};
+// Use memory storage for multer (better for GridFS)
+const upload = multer({ storage: multer.memoryStorage() });
 
 // ✅ Lấy tất cả công thức
 router.get("/", async (req, res) => {
   try {
-    // Get recipes first
-    const { data: recipes, error } = await supabase
-      .from('recipes')
-      .select('*')
-      .order('created_at', { ascending: false });
+    const recipes = await Recipe.find()
+      .sort({ createdAt: -1 })
+      .populate('authorId', 'name email avatar')
+      .lean();
 
-    if (error) {
-      console.error('Error fetching recipes:', error);
-      return res.status(500).json({ message: error.message || 'Failed to fetch recipes' });
-    }
-
-    // Get author names separately
-    const authorIds = [...new Set((recipes || []).map(r => r.author_id))];
-    let authorMap = {};
-    
-    if (authorIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, name')
-        .in('id', authorIds);
-      
-      if (profiles) {
-        profiles.forEach(profile => {
-          authorMap[profile.id] = profile.name;
-        });
+    // Get user favorites if authenticated
+    let favoriteIds = new Set();
+    if (req.headers.authorization) {
+      try {
+        const token = req.headers.authorization.split(' ')[1];
+        const jwt = await import('jsonwebtoken');
+        const decoded = jwt.default.verify(token, process.env.JWT_SECRET);
+        const favorites = await Favorite.find({ userId: decoded.userId }).lean();
+        favoriteIds = new Set(favorites.map(f => f.recipeId.toString()));
+      } catch (err) {
+        // Ignore auth errors
       }
     }
 
     // Format recipes to match frontend expectations
-    const formattedRecipes = (recipes || []).map(recipe => ({
-      _id: recipe.id,
+    const formattedRecipes = recipes.map(recipe => ({
+      _id: recipe._id.toString(),
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image || '',
-      author: authorMap[recipe.author_id] || 'Anonymous',
-      createdAt: recipe.created_at,
-      isFavorite: false
+      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      author: recipe.authorId?.name || 'Anonymous',
+      createdAt: recipe.createdAt,
+      isFavorite: favoriteIds.has(recipe._id.toString())
     }));
-
-    // Check if user has favorited each recipe
-    if (req.headers.authorization) {
-      try {
-        const token = req.headers.authorization.split(' ')[1];
-        const { data: { user } } = await supabase.auth.getUser(token);
-        
-        if (user) {
-          const { data: favorites } = await supabase
-            .from('favorites')
-            .select('recipe_id')
-            .eq('user_id', user.id);
-
-          const favoriteIds = new Set(favorites?.map(f => f.recipe_id) || []);
-          
-          formattedRecipes.forEach(recipe => {
-            recipe.isFavorite = favoriteIds.has(recipe._id);
-          });
-        }
-      } catch (err) {
-        // If token invalid, just return recipes without favorite status
-      }
-    }
 
     res.json(formattedRecipes);
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error fetching recipes:', error);
+    res.status(500).json({ message: error.message || 'Failed to fetch recipes' });
   }
 });
 
@@ -145,43 +60,25 @@ router.get("/search", async (req, res) => {
     const { q } = req.query;
     if (!q) return res.json([]);
 
-    // Supabase text search
-    const { data: recipes, error } = await supabase
-      .from('recipes')
-      .select('*')
-      .or(`title.ilike.%${q}%,ingredients.ilike.%${q}%`)
-      .order('created_at', { ascending: false });
+    // MongoDB text search
+    const recipes = await Recipe.find({
+      $or: [
+        { title: { $regex: q, $options: 'i' } },
+        { ingredients: { $regex: q, $options: 'i' } }
+      ]
+    })
+      .sort({ createdAt: -1 })
+      .populate('authorId', 'name email avatar')
+      .lean();
 
-    if (error) {
-      console.error('Search error:', error);
-      return res.status(500).json({ message: error.message || 'Search failed' });
-    }
-
-    // Get author names
-    const authorIds = [...new Set((recipes || []).map(r => r.author_id))];
-    let authorMap = {};
-    
-    if (authorIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, name')
-        .in('id', authorIds);
-      
-      if (profiles) {
-        profiles.forEach(profile => {
-          authorMap[profile.id] = profile.name;
-        });
-      }
-    }
-
-    const formattedRecipes = (recipes || []).map(recipe => ({
-      _id: recipe.id,
+    const formattedRecipes = recipes.map(recipe => ({
+      _id: recipe._id.toString(),
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image || '',
-      author: authorMap[recipe.author_id] || 'Anonymous',
-      createdAt: recipe.created_at
+      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      author: recipe.authorId?.name || 'Anonymous',
+      createdAt: recipe.createdAt
     }));
 
     res.json(formattedRecipes);
@@ -194,34 +91,22 @@ router.get("/search", async (req, res) => {
 // ✅ Lấy công thức của user
 router.get("/my", authenticate, async (req, res) => {
   try {
-    const { data: recipes, error } = await supabase
-      .from('recipes')
-      .select('*')
-      .eq('author_id', req.user.id)
-      .order('created_at', { ascending: false });
+    const recipes = await Recipe.find({ authorId: req.user.id })
+      .sort({ createdAt: -1 })
+      .populate('authorId', 'name email avatar')
+      .lean();
 
-    if (error) {
-      console.error('Error fetching my recipes:', error);
-      return res.status(500).json({ message: error.message || 'Failed to fetch recipes' });
-    }
+    const user = await User.findById(req.user.id).lean();
+    const authorName = user?.name || req.user.name || 'Me';
 
-    // Get author name
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('name')
-      .eq('id', req.user.id)
-      .single();
-
-    const authorName = profile?.name || req.user.name || 'Me';
-
-    const formattedRecipes = (recipes || []).map(recipe => ({
-      _id: recipe.id,
+    const formattedRecipes = recipes.map(recipe => ({
+      _id: recipe._id.toString(),
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image || '',
+      image: recipe.image ? `/api/files/${recipe.image}` : '',
       author: authorName,
-      createdAt: recipe.created_at
+      createdAt: recipe.createdAt
     }));
 
     res.json(formattedRecipes);
@@ -234,64 +119,26 @@ router.get("/my", authenticate, async (req, res) => {
 // ✅ Lấy công thức yêu thích
 router.get("/favorites", authenticate, async (req, res) => {
   try {
-    // Use authenticated client (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
-    const { data: favorites, error: favError } = await authClient
-      .from('favorites')
-      .select('recipe_id')
-      .eq('user_id', req.user.id);
-
-    if (favError) {
-      console.error('Error fetching favorites:', favError);
-      return res.status(500).json({ message: favError.message || 'Failed to fetch favorites' });
-    }
-
-    const recipeIds = (favorites || []).map(f => f.recipe_id);
+    const favorites = await Favorite.find({ userId: req.user.id }).lean();
+    const recipeIds = favorites.map(f => f.recipeId);
 
     if (recipeIds.length === 0) {
       return res.json([]);
     }
 
-    // Recipes can be fetched with anon client (public read)
-    const { data: recipes, error } = await supabase
-      .from('recipes')
-      .select('*')
-      .in('id', recipeIds)
-      .order('created_at', { ascending: false });
+    const recipes = await Recipe.find({ _id: { $in: recipeIds } })
+      .sort({ createdAt: -1 })
+      .populate('authorId', 'name email avatar')
+      .lean();
 
-    if (error) {
-      console.error('Error fetching favorite recipes:', error);
-      return res.status(500).json({ message: error.message || 'Failed to fetch recipes' });
-    }
-
-    // Get author names
-    const authorIds = [...new Set((recipes || []).map(r => r.author_id))];
-    let authorMap = {};
-    
-    if (authorIds.length > 0) {
-      const { data: profiles } = await supabase
-        .from('profiles')
-        .select('id, name')
-        .in('id', authorIds);
-      
-      if (profiles) {
-        profiles.forEach(profile => {
-          authorMap[profile.id] = profile.name;
-        });
-      }
-    }
-
-    const formattedRecipes = (recipes || []).map(recipe => ({
-      _id: recipe.id,
+    const formattedRecipes = recipes.map(recipe => ({
+      _id: recipe._id.toString(),
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image || '',
-      author: authorMap[recipe.author_id] || 'Anonymous',
-      createdAt: recipe.created_at
+      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      author: recipe.authorId?.name || 'Anonymous',
+      createdAt: recipe.createdAt
     }));
 
     res.json(formattedRecipes);
@@ -310,61 +157,40 @@ router.post("/", authenticate, upload.single('image'), async (req, res) => {
       return res.status(400).json({ message: 'Title, ingredients, and instructions are required' });
     }
 
-    const recipeData = {
-      title: title.trim(),
-      ingredients: ingredients.trim(),
-      instructions: instructions.trim(),
-      author_id: req.user.id,
-      image: ''
-    };
+    let imageFileId = '';
     
-    // Upload image to Supabase Storage if provided
+    // Upload image to GridFS if provided
     if (req.file) {
       try {
-        // Get user token from request
-        const token = req.headers.authorization?.split(' ')[1];
-        recipeData.image = await uploadToSupabase(req.file, 'recipes', token);
+        imageFileId = await uploadToGridFS(req.file, 'recipes');
       } catch (error) {
         console.error('Image upload error:', error);
         return res.status(400).json({ message: 'Failed to upload image: ' + (error.message || 'Unknown error') });
       }
     }
-    
-    // Use authenticated client for insert (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-    
-    const { data: recipe, error } = await authClient
-      .from('recipes')
-      .insert(recipeData)
-      .select('*')
-      .single();
 
-    if (error) {
-      console.error('Error creating recipe:', error);
-      return res.status(400).json({ message: error.message || 'Failed to create recipe' });
-    }
+    const recipe = new Recipe({
+      title: title.trim(),
+      ingredients: ingredients.trim(),
+      instructions: instructions.trim(),
+      authorId: req.user.id,
+      image: imageFileId
+    });
 
-    if (!recipe) {
-      return res.status(400).json({ message: 'Recipe was not created' });
-    }
+    await recipe.save();
 
     // Get author name
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('name')
-      .eq('id', req.user.id)
-      .single();
+    const user = await User.findById(req.user.id).lean();
+    const authorName = user?.name || req.user.name || 'Anonymous';
 
     const formattedRecipe = {
-      _id: recipe.id,
+      _id: recipe._id.toString(),
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image || '',
-      author: profile?.name || req.user.name || 'Anonymous',
-      createdAt: recipe.created_at
+      image: imageFileId ? `/api/files/${imageFileId}` : '',
+      author: authorName,
+      createdAt: recipe.createdAt
     };
 
     res.status(201).json(formattedRecipe);
@@ -380,80 +206,59 @@ router.put("/:id", authenticate, upload.single('image'), async (req, res) => {
     const recipeId = req.params.id;
 
     // Check if recipe exists and user owns it
-    const { data: existingRecipe, error: checkError } = await supabase
-      .from('recipes')
-      .select('*')
-      .eq('id', recipeId)
-      .single();
-
-    if (checkError || !existingRecipe) {
+    const recipe = await Recipe.findById(recipeId);
+    if (!recipe) {
       return res.status(404).json({ message: 'Recipe not found' });
     }
 
-    if (existingRecipe.author_id !== req.user.id) {
+    if (recipe.authorId !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
     const { title, ingredients, instructions } = req.body;
-    const updateData = {
-      title,
-      ingredients,
-      instructions
-    };
+    if (title) recipe.title = title.trim();
+    if (ingredients) recipe.ingredients = ingredients.trim();
+    if (instructions) recipe.instructions = instructions.trim();
 
     // Upload new image if provided
     if (req.file) {
       try {
-        // Get user token from request
-        const token = req.headers.authorization?.split(' ')[1];
-        updateData.image = await uploadToSupabase(req.file, 'recipes', token);
+        // Delete old image if exists
+        if (recipe.image) {
+          try {
+            await deleteFileFromGridFS(recipe.image);
+          } catch (err) {
+            console.log('Could not delete old image:', err.message);
+          }
+        }
+        
+        recipe.image = await uploadToGridFS(req.file, 'recipes');
       } catch (error) {
         console.error('Image upload error:', error);
         return res.status(400).json({ message: 'Failed to upload image: ' + (error.message || 'Unknown error') });
       }
     }
 
-    // Use authenticated client for update (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-    
-    const { data: recipe, error } = await authClient
-      .from('recipes')
-      .update(updateData)
-      .eq('id', recipeId)
-      .select('*')
-      .single();
-
-    if (error) {
-      console.error('Error updating recipe:', error);
-      return res.status(400).json({ message: error.message || 'Failed to update recipe' });
-    }
-
-    if (!recipe) {
-      return res.status(404).json({ message: 'Recipe not found after update' });
-    }
+    await recipe.save();
 
     // Get author name
-    const { data: profile } = await supabase
-      .from('profiles')
-      .select('name')
-      .eq('id', req.user.id)
-      .single();
+    const user = await User.findById(req.user.id).lean();
+    const authorName = user?.name || req.user.name || 'Anonymous';
 
     const formattedRecipe = {
-      _id: recipe.id,
+      _id: recipe._id.toString(),
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image || '',
-      author: profile?.name || req.user.name || 'Anonymous',
-      createdAt: recipe.created_at
+      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      author: authorName,
+      createdAt: recipe.createdAt
     };
 
     res.json(formattedRecipe);
   } catch (error) {
-    res.status(400).json({ message: error.message });
+    console.error('Error updating recipe:', error);
+    res.status(400).json({ message: error.message || 'Failed to update recipe' });
   }
 });
 
@@ -463,38 +268,30 @@ router.delete("/:id", authenticate, async (req, res) => {
     const recipeId = req.params.id;
 
     // Check if recipe exists and user owns it
-    const { data: recipe, error: checkError } = await supabase
-      .from('recipes')
-      .select('*')
-      .eq('id', recipeId)
-      .single();
-
-    if (checkError || !recipe) {
+    const recipe = await Recipe.findById(recipeId);
+    if (!recipe) {
       return res.status(404).json({ message: 'Recipe not found' });
     }
 
-    if (recipe.author_id !== req.user.id) {
+    if (recipe.authorId !== req.user.id) {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    // Use authenticated client for delete (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-    
-    const { error } = await authClient
-      .from('recipes')
-      .delete()
-      .eq('id', recipeId);
-
-    if (error) {
-      console.error('Error deleting recipe:', error);
-      return res.status(500).json({ message: error.message || 'Failed to delete recipe' });
+    // Delete image if exists
+    if (recipe.image) {
+      try {
+        await deleteFileFromGridFS(recipe.image);
+      } catch (err) {
+        console.log('Could not delete image:', err.message);
+      }
     }
+
+    await Recipe.findByIdAndDelete(recipeId);
 
     res.json({ message: 'Recipe deleted' });
   } catch (error) {
-    res.status(500).json({ message: error.message });
+    console.error('Error deleting recipe:', error);
+    res.status(500).json({ message: error.message || 'Failed to delete recipe' });
   }
 });
 
@@ -504,58 +301,22 @@ router.post("/:id/favorite", authenticate, async (req, res) => {
     const recipeId = req.params.id;
     const userId = req.user.id;
 
-    // Use authenticated client for all operations (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
-    // Check if favorite already exists (must use authenticated client)
-    const { data: existing, error: checkError } = await authClient
-      .from('favorites')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('recipe_id', recipeId)
-      .maybeSingle();
-
-    if (checkError) {
-      console.error('Error checking favorite:', checkError);
-      return res.status(500).json({ message: checkError.message || 'Failed to check favorite' });
-    }
+    // Check if favorite already exists
+    const existing = await Favorite.findOne({ userId, recipeId });
 
     if (existing) {
       // Remove favorite
-      const { error } = await authClient
-        .from('favorites')
-        .delete()
-        .eq('user_id', userId)
-        .eq('recipe_id', recipeId);
-
-      if (error) {
-        console.error('Error removing favorite:', error);
-        throw error;
-      }
+      await Favorite.findByIdAndDelete(existing._id);
       res.json({ message: 'Favorite removed', isFavorite: false });
     } else {
       // Add favorite
-      const { error } = await authClient
-        .from('favorites')
-        .insert({ user_id: userId, recipe_id: recipeId });
-
-      if (error) {
-        console.error('Error adding favorite:', error);
-        throw error;
-      }
+      const favorite = new Favorite({ userId, recipeId });
+      await favorite.save();
 
       // Create notification for recipe owner
-      const { data: recipe } = await supabase
-        .from('recipes')
-        .select('author_id')
-        .eq('id', recipeId)
-        .single();
-
-      if (recipe && recipe.author_id) {
-        const { createNotification } = await import('../utils/notifications.js');
-        await createNotification(recipe.author_id, userId, 'recipe_like', 'recipe', recipeId);
+      const recipe = await Recipe.findById(recipeId).lean();
+      if (recipe && recipe.authorId && recipe.authorId !== userId) {
+        await createNotification(recipe.authorId, userId, 'recipe_like', 'recipe', recipeId);
       }
 
       res.json({ message: 'Favorite added', isFavorite: true });
@@ -572,21 +333,7 @@ router.delete("/:id/favorite", authenticate, async (req, res) => {
     const recipeId = req.params.id;
     const userId = req.user.id;
 
-    // Use authenticated client for delete (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
-    const { error } = await authClient
-      .from('favorites')
-      .delete()
-      .eq('user_id', userId)
-      .eq('recipe_id', recipeId);
-
-    if (error) {
-      console.error('Error deleting favorite:', error);
-      return res.status(500).json({ message: error.message || 'Failed to delete favorite' });
-    }
+    await Favorite.findOneAndDelete({ userId, recipeId });
 
     res.json({ message: 'Favorite removed' });
   } catch (error) {
@@ -604,22 +351,7 @@ router.get('/:id/favorite/check', authenticate, async (req, res) => {
     const recipeId = req.params.id;
     const userId = req.user.id;
 
-    // Use authenticated client (required by RLS)
-    const token = req.headers.authorization?.split(' ')[1];
-    const { getAuthClient } = await import('../config/supabase.js');
-    const authClient = token ? getAuthClient(token) : supabase;
-
-    const { data: favorite, error } = await authClient
-      .from('favorites')
-      .select('id')
-      .eq('user_id', userId)
-      .eq('recipe_id', recipeId)
-      .maybeSingle();
-
-    if (error) {
-      console.error('Error checking favorite:', error);
-      return res.json({ isFavorite: false });
-    }
+    const favorite = await Favorite.findOne({ userId, recipeId });
 
     res.json({ isFavorite: !!favorite });
   } catch (error) {
@@ -633,39 +365,22 @@ router.get('/:id', async (req, res) => {
   try {
     const recipeId = req.params.id;
 
-    const { data: recipe, error } = await supabase
-      .from('recipes')
-      .select('*')
-      .eq('id', recipeId)
-      .single();
+    const recipe = await Recipe.findById(recipeId)
+      .populate('authorId', 'name email avatar')
+      .lean();
 
-    if (error || !recipe) {
+    if (!recipe) {
       return res.status(404).json({ message: 'Recipe not found' });
     }
 
-    // Get author name
-    const authorIds = [recipe.author_id];
-    let authorMap = {};
-    
-    const { data: profiles } = await supabase
-      .from('profiles')
-      .select('id, name')
-      .in('id', authorIds);
-    
-    if (profiles && profiles.length > 0) {
-      profiles.forEach(profile => {
-        authorMap[profile.id] = profile.name;
-      });
-    }
-
     const formattedRecipe = {
-      _id: recipe.id,
+      _id: recipe._id.toString(),
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image || '',
-      author: authorMap[recipe.author_id] || 'Anonymous',
-      createdAt: recipe.created_at
+      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      author: recipe.authorId?.name || 'Anonymous',
+      createdAt: recipe.createdAt
     };
 
     res.json(formattedRecipe);
