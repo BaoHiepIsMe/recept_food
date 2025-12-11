@@ -26,11 +26,22 @@ Hướng dẫn chi tiết để deploy backend Recipe Share lên EC2 instance m�
 2. Chọn:
    - **AMI**: Ubuntu 22.04 LTS (hoặc Amazon Linux 2023)
    - **Instance Type**: t2.micro (FREE tier) hoặc t3.small
-   - **Key Pair**: Tạo hoặc chọn key pair
+   - **Key Pair**: Tạo hoặc chọn key pair (cần cho Instance Connect)
    - **Security Group**: Mở port 22 (SSH), 5000 (Backend), 80, 443 (HTTP/HTTPS)
    - **Storage**: 20GB (đủ cho development)
+   - **IAM Role**: Tạo role với policy `AmazonEC2InstanceConnect` (nếu dùng Instance Connect)
 
-### 1.2. Kết Nối EC2
+### 1.2. Kết Nối EC2 - EC2 Instance Connect (Browser Console)
+
+**Cách 1: EC2 Instance Connect (Khuyến nghị - Không cần SSH key)**
+
+1. Vào AWS Console → EC2 → Instances
+2. Chọn instance vừa tạo
+3. Click **"Connect"** button
+4. Chọn tab **"EC2 Instance Connect"**
+5. Click **"Connect"** → Terminal sẽ mở trong browser
+
+**Cách 2: SSH (Nếu cần)**
 
 ```bash
 # SSH vào EC2
