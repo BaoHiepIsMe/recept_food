@@ -3,6 +3,9 @@ import { authenticate } from '../middleware/auth.js';
 import multer from 'multer';
 import Blog from '../models/Blog.js';
 import BlogLike from '../models/BlogLike.js';
+import Comment from '../models/Comment.js';
+import CommentLike from '../models/CommentLike.js';
+import Notification from '../models/Notification.js';
 import User from '../models/User.js';
 import Recipe from '../models/Recipe.js';
 import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinary.js';
@@ -267,8 +270,9 @@ router.delete('/:id', authenticate, async (req, res) => {
       return res.status(404).json({ message: 'Blog not found' });
     }
 
-    if (blog.authorId !== req.user.id) {
-      return res.status(403).json({ message: 'Not authorized' });
+    // Only the author can delete their blog
+    if (blog.authorId.toString() !== req.user.id.toString()) {
+      return res.status(403).json({ message: 'Not authorized. Only the blog author can delete this blog.' });
     }
 
     // Delete image from Cloudinary if exists
@@ -280,9 +284,32 @@ router.delete('/:id', authenticate, async (req, res) => {
       }
     }
 
+    // Find all comments for this blog
+    const comments = await Comment.find({ blogId }).select('_id').lean();
+    const commentIds = comments.map(c => c._id);
+
+    // Delete blog likes
+    await BlogLike.deleteMany({ blogId });
+
+    // Delete comment likes (for all comments of this blog)
+    if (commentIds.length > 0) {
+      await CommentLike.deleteMany({ commentId: { $in: commentIds } });
+    }
+
+    // Delete comments
+    await Comment.deleteMany({ blogId });
+
+    // Delete notifications related to this blog
+    await Notification.deleteMany({ 
+      targetType: 'blog',
+      targetId: blogId 
+    });
+
+    // Delete the blog
     await Blog.findByIdAndDelete(blogId);
 
-    res.json({ message: 'Blog deleted' });
+    console.log(`✅ Blog ${blogId} deleted by user ${req.user.id}`);
+    res.json({ message: 'Blog deleted successfully' });
   } catch (error) {
     console.error('Error deleting blog:', error);
     res.status(500).json({ message: error.message || 'Failed to delete blog' });
