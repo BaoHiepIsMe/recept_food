@@ -5,7 +5,7 @@ import Blog from '../models/Blog.js';
 import BlogLike from '../models/BlogLike.js';
 import User from '../models/User.js';
 import Recipe from '../models/Recipe.js';
-import { uploadToGridFS, deleteFileFromGridFS } from '../utils/gridfs.js';
+import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinary.js';
 import { createNotification } from '../utils/notifications.js';
 import blogCommentRoutes from './blogCommentRoutes.js';
 
@@ -62,10 +62,10 @@ router.get('/', async (req, res) => {
       _id: blog._id.toString(),
       title: blog.title,
       content: blog.content,
-      image: blog.image ? `/api/files/${blog.image}` : '',
+      image: blog.image || '',
       author: blog.authorId ? {
         name: blog.authorId.name || 'Anonymous',
-        avatar: blog.authorId.avatar ? `/api/files/${blog.authorId.avatar}` : ''
+        avatar: blog.authorId.avatar || ''
       } : { name: 'Anonymous', avatar: '' },
       recipe: blog.recipeId ? {
         _id: blog.recipeId._id.toString(),
@@ -94,14 +94,14 @@ router.get('/my', authenticate, async (req, res) => {
     const user = await User.findById(req.user.id).lean();
     const author = user ? {
       name: user.name || 'Me',
-      avatar: user.avatar ? `/api/files/${user.avatar}` : ''
+      avatar: user.avatar || ''
     } : { name: req.user.name || 'Me', avatar: '' };
 
     const formattedBlogs = blogs.map(blog => ({
       _id: blog._id.toString(),
       title: blog.title,
       content: blog.content,
-      image: blog.image ? `/api/files/${blog.image}` : '',
+      image: blog.image || '',
       author: author,
       recipe: blog.recipeId ? {
         _id: blog.recipeId._id.toString(),
@@ -126,12 +126,12 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
       return res.status(400).json({ message: 'Title and content are required' });
     }
 
-    let imageFileId = '';
+    let imageUrl = '';
     
-    // Upload image to GridFS if provided
+    // Upload image to Cloudinary if provided
     if (req.file) {
       try {
-        imageFileId = await uploadToGridFS(req.file, 'blogs');
+        imageUrl = await uploadToCloudinary(req.file, 'blogs');
       } catch (error) {
         console.error('Image upload error:', error);
         return res.status(400).json({ message: 'Failed to upload image: ' + (error.message || 'Unknown error') });
@@ -142,7 +142,7 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
       title: title.trim(),
       content: content.trim(),
       authorId: req.user.id,
-      image: imageFileId,
+      image: imageUrl,
       recipeId: recipeId || null
     };
 
@@ -166,10 +166,10 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
       _id: blog._id.toString(),
       title: blog.title,
       content: blog.content,
-      image: imageFileId ? `/api/files/${imageFileId}` : '',
+      image: imageUrl,
       author: user ? {
         name: user.name || 'Anonymous',
-        avatar: user.avatar ? `/api/files/${user.avatar}` : ''
+        avatar: user.avatar || ''
       } : { name: req.user.name || 'Anonymous', avatar: '' },
       recipe: recipeInfo,
       createdAt: blog.createdAt
@@ -205,16 +205,16 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
     // Upload new image if provided
     if (req.file) {
       try {
-        // Delete old image if exists
+        // Delete old image from Cloudinary if exists
         if (blog.image) {
           try {
-            await deleteFileFromGridFS(blog.image);
+            await deleteFromCloudinary(blog.image);
           } catch (err) {
             console.log('Could not delete old image:', err.message);
           }
         }
         
-        blog.image = await uploadToGridFS(req.file, 'blogs');
+        blog.image = await uploadToCloudinary(req.file, 'blogs');
       } catch (error) {
         console.error('Image upload error:', error);
         return res.status(400).json({ message: 'Failed to upload image: ' + (error.message || 'Unknown error') });
@@ -240,10 +240,10 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
       _id: blog._id.toString(),
       title: blog.title,
       content: blog.content,
-      image: blog.image ? `/api/files/${blog.image}` : '',
+      image: blog.image || '',
       author: user ? {
         name: user.name || 'Anonymous',
-        avatar: user.avatar ? `/api/files/${user.avatar}` : ''
+        avatar: user.avatar || ''
       } : { name: req.user.name || 'Anonymous', avatar: '' },
       recipe: recipeInfo,
       createdAt: blog.createdAt
@@ -271,10 +271,10 @@ router.delete('/:id', authenticate, async (req, res) => {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    // Delete image if exists
+    // Delete image from Cloudinary if exists
     if (blog.image) {
       try {
-        await deleteFileFromGridFS(blog.image);
+        await deleteFromCloudinary(blog.image);
       } catch (err) {
         console.log('Could not delete image:', err.message);
       }

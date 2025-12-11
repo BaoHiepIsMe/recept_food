@@ -1,5 +1,4 @@
 import mongoose from 'mongoose';
-import { MongoClient, GridFSBucket } from 'mongodb';
 import dotenv from 'dotenv';
 
 dotenv.config();
@@ -42,31 +41,8 @@ const connectDB = async () => {
   }
 };
 
-// GridFS setup for file storage
-let gridFSBucket = null;
-let mongoClient = null;
-
-export const getGridFSBucket = async () => {
-  if (!gridFSBucket) {
-    try {
-      mongoClient = new MongoClient(MONGODB_URI);
-      await mongoClient.connect();
-      const db = mongoClient.db();
-      gridFSBucket = new GridFSBucket(db, { bucketName: 'files' });
-      console.log('✅ GridFS bucket initialized');
-    } catch (error) {
-      console.error('❌ GridFS initialization error:', error);
-      throw error;
-    }
-  }
-  return gridFSBucket;
-};
-
 // Close connections gracefully
 export const closeConnections = async () => {
-  if (mongoClient) {
-    await mongoClient.close();
-  }
   if (mongoose.connection.readyState === 1) {
     await mongoose.connection.close();
   }

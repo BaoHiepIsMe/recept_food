@@ -4,7 +4,7 @@ import jwt from 'jsonwebtoken';
 import { authenticate } from '../middleware/auth.js';
 import User from '../models/User.js';
 import multer from 'multer';
-import { uploadToGridFS } from '../utils/gridfs.js';
+import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinary.js';
 
 const router = express.Router();
 
@@ -29,11 +29,11 @@ router.post('/register', upload.single('avatar'), async (req, res) => {
     // Hash password
     const hashedPassword = await bcrypt.hash(password, 10);
 
-    // Upload avatar if provided
-    let avatarFileId = '';
+    // Upload avatar to Cloudinary if provided
+    let avatarUrl = '';
     if (req.file) {
       try {
-        avatarFileId = await uploadToGridFS(req.file, 'avatars');
+        avatarUrl = await uploadToCloudinary(req.file, 'avatars');
       } catch (error) {
         console.error('Avatar upload error:', error);
         return res.status(400).json({ message: 'Failed to upload avatar: ' + error.message });
@@ -46,7 +46,7 @@ router.post('/register', upload.single('avatar'), async (req, res) => {
       name,
       email,
       password: hashedPassword,
-      avatar: avatarFileId
+      avatar: avatarUrl
     });
 
     await user.save();
@@ -64,7 +64,7 @@ router.post('/register', upload.single('avatar'), async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        avatar: avatarFileId ? `/api/files/${avatarFileId}` : ''
+        avatar: avatarUrl
       }
     });
   } catch (error) {
@@ -107,7 +107,7 @@ router.post('/login', async (req, res) => {
         id: user._id,
         name: user.name,
         email: user.email,
-        avatar: user.avatar ? `/api/files/${user.avatar}` : '',
+        avatar: user.avatar || '',
         bio: user.bio
       }
     });
@@ -139,7 +139,7 @@ router.get('/profile', authenticate, async (req, res) => {
       id: user._id,
       name: user.name,
       email: user.email,
-      avatar: user.avatar ? `/api/files/${user.avatar}` : '',
+      avatar: user.avatar || '',
       bio: user.bio,
       recipeCount,
       favoriteCount,
@@ -166,18 +166,17 @@ router.put('/profile', authenticate, upload.single('avatar'), async (req, res) =
 
     if (req.file) {
       try {
-        // Delete old avatar if exists
+        // Delete old avatar from Cloudinary if exists
         if (user.avatar) {
-          const { deleteFileFromGridFS } = await import('../utils/gridfs.js');
           try {
-            await deleteFileFromGridFS(user.avatar);
+            await deleteFromCloudinary(user.avatar);
           } catch (err) {
             // Ignore delete errors
             console.log('Could not delete old avatar:', err.message);
           }
         }
         
-        user.avatar = await uploadToGridFS(req.file, 'avatars');
+        user.avatar = await uploadToCloudinary(req.file, 'avatars');
       } catch (error) {
         console.error('Avatar upload error:', error);
         return res.status(400).json({ message: 'Failed to upload avatar: ' + error.message });
@@ -190,7 +189,7 @@ router.put('/profile', authenticate, upload.single('avatar'), async (req, res) =
       id: user._id,
       name: user.name,
       email: user.email,
-      avatar: user.avatar ? `/api/files/${user.avatar}` : '',
+      avatar: user.avatar || '',
       bio: user.bio
     });
   } catch (error) {

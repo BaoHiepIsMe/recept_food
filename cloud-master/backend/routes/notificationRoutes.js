@@ -2,7 +2,6 @@ import express from 'express';
 import { authenticate } from '../middleware/auth.js';
 import Notification from '../models/Notification.js';
 import User from '../models/User.js';
-
 const router = express.Router();
 
 // Get user's notifications
@@ -28,7 +27,7 @@ router.get('/', authenticate, async (req, res) => {
         actorMap[actor._id] = {
           id: actor._id,
           name: actor.name || 'Someone',
-          avatar: actor.avatar ? `/api/files/${actor.avatar}` : ''
+          avatar: actor.avatar || ''
         };
       });
     }

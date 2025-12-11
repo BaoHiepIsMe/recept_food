@@ -2,11 +2,11 @@ import express from 'express';
 import dotenv from 'dotenv';
 import cors from 'cors';
 import connectDB from './config/mongodb.js';
+import { testCloudinaryConnection } from './config/cloudinary.js';
 import recipeRoutes from './routes/recipeRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import blogRoutes from './routes/blogRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
-import fileRoutes from './routes/fileRoutes.js';
 
 dotenv.config();
 
@@ -25,15 +25,31 @@ app.use((req, res, next) => {
 // Connect to MongoDB
 connectDB();
 
+// Test Cloudinary connection
+testCloudinaryConnection().catch(err => {
+  console.error('⚠️  Cloudinary connection test error:', err.message);
+});
+
 // Health check
 app.get('/api/health', async (req, res) => {
   try {
     const mongoose = await import('mongoose');
     const isConnected = mongoose.default.connection.readyState === 1;
+    
+    // Test Cloudinary connection
+    let cloudinaryStatus = 'unknown';
+    try {
+      const { testCloudinaryConnection } = await import('./config/cloudinary.js');
+      cloudinaryStatus = await testCloudinaryConnection() ? 'connected' : 'disconnected';
+    } catch (err) {
+      cloudinaryStatus = 'error';
+    }
+    
     res.json({ 
       status: 'ok', 
       server: SERVER_ID, 
-      database: isConnected ? 'connected' : 'disconnected' 
+      database: isConnected ? 'connected' : 'disconnected',
+      cloudinary: cloudinaryStatus
     });
   } catch (error) {
     res.json({ status: 'ok', server: SERVER_ID, database: 'error', error: error.message });
@@ -45,9 +61,9 @@ app.use('/api/auth', authRoutes);
 app.use('/api/recipes', recipeRoutes);
 app.use('/api/blogs', blogRoutes);
 app.use('/api/notifications', notificationRoutes);
-app.use('/api/files', fileRoutes);
 
 app.listen(process.env.PORT || 5000, () => {
   console.log(`🚀 Server running on port ${process.env.PORT || 5000}`);
-  console.log(`📦 Using MongoDB Atlas (Sharded Cluster)`);
+  console.log(`📦 Using MongoDB (Sharded Cluster)`);
+  console.log(`☁️  Using Cloudinary for image storage`);
 });

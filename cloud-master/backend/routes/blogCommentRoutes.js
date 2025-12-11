@@ -71,7 +71,7 @@ router.get('/', async (req, res) => {
       const authorId = typeof comment.authorId === 'object' ? comment.authorId._id || comment.authorId : comment.authorId;
       const authorName = typeof comment.authorId === 'object' ? (comment.authorId.name || 'Anonymous') : 'Anonymous';
       const authorAvatar = typeof comment.authorId === 'object' && comment.authorId.avatar 
-        ? `/api/files/${comment.authorId.avatar}` : '';
+        ? comment.authorId.avatar : '';
       
       return {
         _id: comment._id.toString(),
@@ -134,7 +134,7 @@ router.post('/', authenticate, async (req, res) => {
       author: user ? {
         id: user._id,
         name: user.name || 'Anonymous',
-        avatar: user.avatar ? `/api/files/${user.avatar}` : ''
+        avatar: user.avatar || ''
       } : { id: req.user.id, name: req.user.name || 'Anonymous', avatar: '' },
       likes: 0,
       isLiked: false,

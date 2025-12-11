@@ -4,7 +4,7 @@ import multer from "multer";
 import Recipe from "../models/Recipe.js";
 import Favorite from "../models/Favorite.js";
 import User from "../models/User.js";
-import { uploadToGridFS, deleteFileFromGridFS } from "../utils/gridfs.js";
+import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 import { createNotification } from "../utils/notifications.js";
 import commentRoutes from "./commentRoutes.js";
 
@@ -41,7 +41,7 @@ router.get("/", async (req, res) => {
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      image: recipe.image || '',
       author: recipe.authorId?.name || 'Anonymous',
       createdAt: recipe.createdAt,
       isFavorite: favoriteIds.has(recipe._id.toString())
@@ -76,7 +76,7 @@ router.get("/search", async (req, res) => {
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      image: recipe.image || '',
       author: recipe.authorId?.name || 'Anonymous',
       createdAt: recipe.createdAt
     }));
@@ -104,7 +104,7 @@ router.get("/my", authenticate, async (req, res) => {
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      image: recipe.image || '',
       author: authorName,
       createdAt: recipe.createdAt
     }));
@@ -136,7 +136,7 @@ router.get("/favorites", authenticate, async (req, res) => {
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      image: recipe.image || '',
       author: recipe.authorId?.name || 'Anonymous',
       createdAt: recipe.createdAt
     }));
@@ -157,12 +157,12 @@ router.post("/", authenticate, upload.single('image'), async (req, res) => {
       return res.status(400).json({ message: 'Title, ingredients, and instructions are required' });
     }
 
-    let imageFileId = '';
+    let imageUrl = '';
     
-    // Upload image to GridFS if provided
+    // Upload image to Cloudinary if provided
     if (req.file) {
       try {
-        imageFileId = await uploadToGridFS(req.file, 'recipes');
+        imageUrl = await uploadToCloudinary(req.file, 'recipes');
       } catch (error) {
         console.error('Image upload error:', error);
         return res.status(400).json({ message: 'Failed to upload image: ' + (error.message || 'Unknown error') });
@@ -174,7 +174,7 @@ router.post("/", authenticate, upload.single('image'), async (req, res) => {
       ingredients: ingredients.trim(),
       instructions: instructions.trim(),
       authorId: req.user.id,
-      image: imageFileId
+      image: imageUrl
     });
 
     await recipe.save();
@@ -188,7 +188,7 @@ router.post("/", authenticate, upload.single('image'), async (req, res) => {
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: imageFileId ? `/api/files/${imageFileId}` : '',
+      image: imageUrl,
       author: authorName,
       createdAt: recipe.createdAt
     };
@@ -223,16 +223,16 @@ router.put("/:id", authenticate, upload.single('image'), async (req, res) => {
     // Upload new image if provided
     if (req.file) {
       try {
-        // Delete old image if exists
+        // Delete old image from Cloudinary if exists
         if (recipe.image) {
           try {
-            await deleteFileFromGridFS(recipe.image);
+            await deleteFromCloudinary(recipe.image);
           } catch (err) {
             console.log('Could not delete old image:', err.message);
           }
         }
         
-        recipe.image = await uploadToGridFS(req.file, 'recipes');
+        recipe.image = await uploadToCloudinary(req.file, 'recipes');
       } catch (error) {
         console.error('Image upload error:', error);
         return res.status(400).json({ message: 'Failed to upload image: ' + (error.message || 'Unknown error') });
@@ -250,7 +250,7 @@ router.put("/:id", authenticate, upload.single('image'), async (req, res) => {
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      image: recipe.image || '',
       author: authorName,
       createdAt: recipe.createdAt
     };
@@ -277,10 +277,10 @@ router.delete("/:id", authenticate, async (req, res) => {
       return res.status(403).json({ message: 'Not authorized' });
     }
 
-    // Delete image if exists
+    // Delete image from Cloudinary if exists
     if (recipe.image) {
       try {
-        await deleteFileFromGridFS(recipe.image);
+        await deleteFromCloudinary(recipe.image);
       } catch (err) {
         console.log('Could not delete image:', err.message);
       }
@@ -378,7 +378,7 @@ router.get('/:id', async (req, res) => {
       title: recipe.title,
       ingredients: recipe.ingredients,
       instructions: recipe.instructions,
-      image: recipe.image ? `/api/files/${recipe.image}` : '',
+      image: recipe.image || '',
       author: recipe.authorId?.name || 'Anonymous',
       createdAt: recipe.createdAt
     };
