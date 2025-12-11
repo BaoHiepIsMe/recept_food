@@ -292,3 +292,4 @@ sudo nginx -T | grep -A 10 "upstream backend_servers"
 
 **Khuyến nghị:** Dùng **Script** (FREE) để có active health check tốt nhất.
 
+

@@ -17,14 +17,10 @@ const connectDB = async () => {
     await mongoose.connect(MONGODB_URI, {
       useNewUrlParser: true,
       useUnifiedTopology: true,
-      // For sharded clusters, these options help with connection stability
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
-      // Fix read preference for single-member replica sets (config-rs)
-      readPreference: 'primary',
-      // Set read preference mode for all operations
-      readPreferenceSecondary: false,
     });
+    
     
     // Detect if connected to sharded cluster
     const isSharded = mongoose.connection.db?.admin().command({ isMaster: 1 }).then(result => result.msg === 'isdbgrid').catch(() => false);
