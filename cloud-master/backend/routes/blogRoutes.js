@@ -67,9 +67,10 @@ router.get('/', async (req, res) => {
       content: blog.content,
       image: blog.image || '',
       author: blog.authorId ? {
+        id: blog.authorId._id?.toString() || blog.authorId.toString(),
         name: blog.authorId.name || 'Anonymous',
         avatar: blog.authorId.avatar || ''
-      } : { name: 'Anonymous', avatar: '' },
+      } : { id: '', name: 'Anonymous', avatar: '' },
       recipe: blog.recipeId ? {
         _id: blog.recipeId._id.toString(),
         title: blog.recipeId.title
@@ -96,9 +97,10 @@ router.get('/my', authenticate, async (req, res) => {
 
     const user = await User.findById(req.user.id).lean();
     const author = user ? {
+      id: user._id?.toString() || user.toString(),
       name: user.name || 'Me',
       avatar: user.avatar || ''
-    } : { name: req.user.name || 'Me', avatar: '' };
+    } : { id: req.user.id, name: req.user.name || 'Me', avatar: '' };
 
     const formattedBlogs = blogs.map(blog => ({
       _id: blog._id.toString(),
@@ -171,9 +173,10 @@ router.post('/', authenticate, upload.single('image'), async (req, res) => {
       content: blog.content,
       image: imageUrl,
       author: user ? {
+        id: user._id?.toString() || user.toString(),
         name: user.name || 'Anonymous',
         avatar: user.avatar || ''
-      } : { name: req.user.name || 'Anonymous', avatar: '' },
+      } : { id: req.user.id, name: req.user.name || 'Anonymous', avatar: '' },
       recipe: recipeInfo,
       createdAt: blog.createdAt
     };
@@ -245,9 +248,10 @@ router.put('/:id', authenticate, upload.single('image'), async (req, res) => {
       content: blog.content,
       image: blog.image || '',
       author: user ? {
+        id: user._id?.toString() || user.toString(),
         name: user.name || 'Anonymous',
         avatar: user.avatar || ''
-      } : { name: req.user.name || 'Anonymous', avatar: '' },
+      } : { id: req.user.id, name: req.user.name || 'Anonymous', avatar: '' },
       recipe: recipeInfo,
       createdAt: blog.createdAt
     };

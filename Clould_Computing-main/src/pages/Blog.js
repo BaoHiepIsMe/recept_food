@@ -230,6 +230,40 @@ export default function Blog() {
     }
   };
 
+  const handleDeleteBlog = async (blogId) => {
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+    
+    if (!window.confirm('Bạn có chắc chắn muốn xóa blog này không?')) {
+      return;
+    }
+
+    try {
+      await api.delete(`/blogs/${blogId}`);
+      fetchBlogs();
+      // Also clear comments if they were loaded
+      setBlogComments(prev => {
+        const newComments = { ...prev };
+        delete newComments[blogId];
+        return newComments;
+      });
+      setShowComments(prev => {
+        const newShow = { ...prev };
+        delete newShow[blogId];
+        return newShow;
+      });
+    } catch (err) {
+      console.error(err);
+      if (err.response?.status === 403) {
+        alert('Bạn không có quyền xóa blog này');
+      } else {
+        alert('Lỗi khi xóa blog');
+      }
+    }
+  };
+
   const handleCommentSubmit = async (e, blogId) => {
     e.preventDefault();
     if (!user) {
@@ -513,6 +547,29 @@ export default function Blog() {
                       )}
                     </p>
                   </div>
+                  {/* Delete button - only show if user is the author */}
+                  {user && blog.author?.id === user.id && (
+                    <button
+                      onClick={() => handleDeleteBlog(blog._id)}
+                      className="ml-auto p-2 text-red-500 hover:text-red-700 hover:bg-red-50 rounded-full transition"
+                      title="Xóa blog"
+                    >
+                      <svg
+                        xmlns="http://www.w3.org/2000/svg"
+                        className="h-5 w-5"
+                        fill="none"
+                        viewBox="0 0 24 24"
+                        stroke="currentColor"
+                      >
+                        <path
+                          strokeLinecap="round"
+                          strokeLinejoin="round"
+                          strokeWidth={2}
+                          d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16"
+                        />
+                      </svg>
+                    </button>
+                  )}
                 </div>
 
                 {/* Title */}
