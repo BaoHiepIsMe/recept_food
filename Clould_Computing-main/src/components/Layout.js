@@ -1,13 +1,12 @@
 import { Link, useNavigate, useLocation } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import Notifications from './Notifications';
-import { useState, useEffect } from 'react';
+import ServerBadge from './ServerBadge';
 
 export default function Layout({ children }) {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
-  const [serverId, setServerId] = useState(localStorage.getItem('currentServerId') || 'Loading...');
 
   const handleLogout = () => {
     logout();
@@ -15,58 +14,6 @@ export default function Layout({ children }) {
   };
 
   const isActive = (path) => location.pathname === path;
-
-  // Extract short server ID (A, B, C) from full server ID
-  const getShortServerId = (fullServerId) => {
-    if (!fullServerId || fullServerId === 'Loading...') return '?';
-    
-    // Extract letter from patterns like:
-    // "BE1-EC2-A-Shard-A" → "A"
-    // "BE1-EC2-B-Shard-B" → "B"
-    // "BE1-EC2-C-Shard-C" → "C"
-    const match = fullServerId.match(/EC2-([ABC])/i);
-    if (match) {
-      return match[1].toUpperCase();
-    }
-    
-    // Fallback: try to find any single letter
-    const letterMatch = fullServerId.match(/\b([ABC])\b/i);
-    if (letterMatch) {
-      return letterMatch[1].toUpperCase();
-    }
-    
-    // If no match, return first 3 chars
-    return fullServerId.substring(0, 3);
-  };
-
-  useEffect(() => {
-    // Listen for server ID updates
-    const handleServerIdUpdate = (event) => {
-      setServerId(event.detail);
-    };
-    
-    window.addEventListener('serverIdUpdate', handleServerIdUpdate);
-    
-    // Try to get server ID from health check on mount
-    const fetchServerId = async () => {
-      try {
-        const response = await fetch(`${process.env.REACT_APP_API_URL || 'http://localhost:5000/api'}/health`);
-        const data = await response.json();
-        if (data.server) {
-          setServerId(data.server);
-          localStorage.setItem('currentServerId', data.server);
-        }
-      } catch (err) {
-        console.error('Failed to fetch server ID:', err);
-      }
-    };
-    
-    fetchServerId();
-    
-    return () => {
-      window.removeEventListener('serverIdUpdate', handleServerIdUpdate);
-    };
-  }, []);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-orange-50 via-yellow-50 to-orange-100">
@@ -78,19 +25,7 @@ export default function Layout({ children }) {
             <Link to="/" className="flex items-center space-x-2">
               <span className="text-3xl">🍳</span>
               <span className="text-2xl font-bold text-orange-600">RecipeShare</span>
-              <span 
-                className="text-xs font-bold text-white px-2 py-1 rounded-full min-w-[24px] text-center"
-                style={{
-                  backgroundColor: 
-                    getShortServerId(serverId) === 'A' ? '#3B82F6' : // Blue for A
-                    getShortServerId(serverId) === 'B' ? '#10B981' : // Green for B
-                    getShortServerId(serverId) === 'C' ? '#F59E0B' : // Orange for C
-                    '#6B7280' // Gray for unknown
-                }}
-                title={`Backend: ${serverId}`}
-              >
-                {getShortServerId(serverId)}
-              </span>
+              <ServerBadge />
             </Link>
 
             {/* Navigation Links */}

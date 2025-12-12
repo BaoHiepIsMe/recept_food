@@ -32,7 +32,7 @@ export default function MyRecipes() {
     }, 3000);
     
     return () => clearInterval(interval);
-  }, [user]);
+  }, [user, navigate]);
 
   const fetchMyRecipes = async () => {
     try {

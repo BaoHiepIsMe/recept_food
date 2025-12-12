@@ -15,12 +15,10 @@ if (!MONGODB_URI) {
 const connectDB = async () => {
   try {
     await mongoose.connect(MONGODB_URI, {
-      useNewUrlParser: true,
-      useUnifiedTopology: true,
       serverSelectionTimeoutMS: 5000,
       socketTimeoutMS: 45000,
+      readPreference: 'primary', // For sharded clusters
     });
-    
     
     // Detect if connected to sharded cluster
     const isSharded = mongoose.connection.db?.admin().command({ isMaster: 1 }).then(result => result.msg === 'isdbgrid').catch(() => false);

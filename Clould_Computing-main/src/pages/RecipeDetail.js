@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -154,6 +154,38 @@ export default function RecipeDetail() {
   const [replyingTo, setReplyingTo] = useState(null);
   const [replyText, setReplyText] = useState('');
 
+  const fetchRecipe = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await api.get(`/recipes/${id}`);
+      setRecipe(res.data);
+    } catch (err) {
+      console.error(err);
+      navigate('/');
+    } finally {
+      setLoading(false);
+    }
+  }, [id, navigate]);
+
+  const fetchComments = useCallback(async () => {
+    try {
+      const res = await api.get(`/recipes/${id}/comments`);
+      setComments(res.data || []);
+    } catch (err) {
+      console.error(err);
+    }
+  }, [id]);
+
+  const checkFavorite = useCallback(async () => {
+    if (!user) return;
+    try {
+      const res = await api.get(`/recipes/${id}/favorite/check`);
+      setIsFavorite(res.data.isFavorite || false);
+    } catch (err) {
+      // Ignore if endpoint doesn't exist
+    }
+  }, [user, id]);
+
   useEffect(() => {
     fetchRecipe();
     fetchComments();
@@ -169,39 +201,7 @@ export default function RecipeDetail() {
     }, 3000);
     
     return () => clearInterval(interval);
-  }, [id, user]);
-
-  const fetchRecipe = async () => {
-    try {
-      setLoading(true);
-      const res = await api.get(`/recipes/${id}`);
-      setRecipe(res.data);
-    } catch (err) {
-      console.error(err);
-      navigate('/');
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const fetchComments = async () => {
-    try {
-      const res = await api.get(`/recipes/${id}/comments`);
-      setComments(res.data || []);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const checkFavorite = async () => {
-    if (!user) return;
-    try {
-      const res = await api.get(`/recipes/${id}/favorite/check`);
-      setIsFavorite(res.data.isFavorite || false);
-    } catch (err) {
-      // Ignore if endpoint doesn't exist
-    }
-  };
+  }, [id, user, fetchRecipe, fetchComments, checkFavorite]);
 
   const handleFavorite = async () => {
     if (!user) {
@@ -283,24 +283,6 @@ export default function RecipeDetail() {
     }
   };
 
-  const updateCommentLikes = (comments, commentId, isLiked) => {
-    return comments.map(comment => {
-      if (comment._id === commentId) {
-        return {
-          ...comment,
-          likes: isLiked ? comment.likes + 1 : comment.likes - 1,
-          isLiked: !comment.isLiked
-        };
-      }
-      if (comment.replies && comment.replies.length > 0) {
-        return {
-          ...comment,
-          replies: updateCommentLikes(comment.replies, commentId, isLiked)
-        };
-      }
-      return comment;
-    });
-  };
 
   if (loading) {
     return (

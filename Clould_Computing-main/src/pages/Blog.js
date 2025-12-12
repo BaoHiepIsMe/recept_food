@@ -183,7 +183,7 @@ export default function Blog() {
     }, 3000);
     
     return () => clearInterval(interval);
-  }, [user, showComments]);
+  }, [user, showComments, navigate]);
 
   const fetchBlogs = async () => {
     try {

@@ -1,13 +1,11 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
-import { useAuth } from '../context/AuthContext';
 
 export default function Home() {
   const [recipes, setRecipes] = useState([]);
   const [search, setSearch] = useState('');
   const [loading, setLoading] = useState(true);
-  const { user } = useAuth();
   const navigate = useNavigate();
 
   const fetchRecipes = async (query = '') => {
