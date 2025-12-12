@@ -20,7 +20,10 @@ const io = new Server(server, {
   cors: {
     origin: process.env.FRONTEND_URL || '*',
     methods: ['GET', 'POST']
-  }
+  },
+  pingTimeout: 60000,    // 60 seconds
+  pingInterval: 25000,   // 25 seconds
+  transports: ['websocket', 'polling']
 });
 
 // Redis PubSub
@@ -43,7 +46,8 @@ const CHANNELS = [
   'comment:created',
   'comment:deleted',
   'favorite:added',
-  'favorite:removed'
+  'favorite:removed',
+  'notification:created'
 ];
 
 CHANNELS.forEach(channel => {
@@ -75,10 +79,14 @@ subscriber.on('message', (channel, message) => {
 
 // WebSocket connections
 io.on('connection', (socket) => {
-  console.log(`🔌 Client connected: ${socket.id}`);
+  console.log(`🔌 Client connected: ${socket.id} (Total: ${io.engine.clientsCount})`);
   
-  socket.on('disconnect', () => {
-    console.log(`🔌 Client disconnected: ${socket.id}`);
+  socket.on('disconnect', (reason) => {
+    console.log(`🔌 Client disconnected: ${socket.id} (Reason: ${reason})`);
+  });
+  
+  socket.on('error', (error) => {
+    console.error(`❌ Socket error for ${socket.id}:`, error);
   });
 });
 

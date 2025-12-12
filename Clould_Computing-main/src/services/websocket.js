@@ -18,7 +18,10 @@ class WebSocketService {
       transports: ['websocket', 'polling'],
       reconnection: true,
       reconnectionDelay: 1000,
-      reconnectionAttempts: 10
+      reconnectionDelayMax: 5000,
+      reconnectionAttempts: Infinity,
+      timeout: 20000,
+      autoConnect: true
     });
 
     this.socket.on('connect', () => {
@@ -26,14 +29,18 @@ class WebSocketService {
       this.connected = true;
     });
 
-    this.socket.on('disconnect', () => {
-      console.log('❌ WebSocket disconnected');
+    this.socket.on('disconnect', (reason) => {
+      console.log('❌ WebSocket disconnected:', reason);
       this.connected = false;
     });
 
     this.socket.on('reconnect', (attemptNumber) => {
       console.log(`🔄 WebSocket reconnected after ${attemptNumber} attempts`);
       this.connected = true;
+    });
+
+    this.socket.on('connect_error', (error) => {
+      console.error('❌ WebSocket connection error:', error.message);
     });
 
     // Listen for dataChanged events from server

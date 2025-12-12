@@ -2,6 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
+import websocketService from '../services/websocket';
 
 export default function Notifications() {
   const { user } = useAuth();
@@ -15,16 +16,22 @@ export default function Notifications() {
     if (user) {
       fetchNotifications();
       fetchUnreadCount();
-      // Real-time polling: refresh every 3 seconds
-      const interval = setInterval(() => {
-        fetchUnreadCount();
-        if (showDropdown) {
-          fetchNotifications();
-        }
-      }, 3000);
-      return () => clearInterval(interval);
     }
-  }, [user, showDropdown]);
+  }, [user]);
+
+  // Listen for real-time notification events via WebSocket
+  useEffect(() => {
+    if (!user) return;
+
+    const unsubscribe = websocketService.on('notification:created', (data) => {
+      console.log('🔔 New notification received:', data);
+      // Refresh notifications and unread count
+      fetchNotifications();
+      fetchUnreadCount();
+    });
+
+    return () => unsubscribe();
+  }, [user]);
 
   // Close dropdown when clicking outside
   useEffect(() => {

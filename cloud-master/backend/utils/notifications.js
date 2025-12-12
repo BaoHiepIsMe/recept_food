@@ -1,4 +1,5 @@
 import Notification from '../models/Notification.js';
+import { publishEvent } from './eventPublisher.js';
 
 /**
  * Create a notification
@@ -24,6 +25,16 @@ export async function createNotification(userId, actorId, type, targetType, targ
     });
 
     await notification.save();
+
+    // 🔥 Emit event to Redis PubSub for real-time updates
+    await publishEvent('notification:created', {
+      notificationId: notification._id.toString(),
+      userId,
+      actorId,
+      type,
+      targetType,
+      targetId
+    });
   } catch (error) {
     console.error('Error creating notification:', error);
     // Don't throw - notifications are not critical
