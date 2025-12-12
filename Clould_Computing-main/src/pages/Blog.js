@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -163,34 +163,7 @@ export default function Blog() {
 
   const [recipes, setRecipes] = useState([]);
 
-  useEffect(() => {
-    if (!user) {
-      navigate('/login');
-      return;
-    }
-    fetchBlogs();
-    fetchRecipes();
-    
-    // Listen for data changes (CRUD operations) instead of polling
-    const handleDataChange = (event) => {
-      console.log('Data changed, refreshing blogs:', event.detail);
-      fetchBlogs();
-      // Refresh comments for open blogs
-      Object.keys(showComments).forEach(blogId => {
-        if (showComments[blogId]) {
-          fetchBlogComments(blogId);
-        }
-      });
-    };
-    
-    window.addEventListener('dataChanged', handleDataChange);
-    
-    return () => {
-      window.removeEventListener('dataChanged', handleDataChange);
-    };
-  }, [user, showComments, navigate]);
-
-  const fetchBlogs = async () => {
+  const fetchBlogs = useCallback(async () => {
     try {
       setLoading(true);
       const res = await api.get('/blogs');
@@ -208,9 +181,9 @@ export default function Blog() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
-  const fetchBlogComments = async (blogId) => {
+  const fetchBlogComments = useCallback(async (blogId) => {
     try {
       const res = await api.get(`/blogs/${blogId}/comments`);
       const comments = res.data || [];
@@ -223,7 +196,45 @@ export default function Blog() {
     } catch (err) {
       console.error('Error fetching comments:', err);
     }
-  };
+  }, []);
+
+  const fetchRecipes = useCallback(async () => {
+    try {
+      const res = await api.get('/recipes');
+      setRecipes(res.data || []);
+    } catch (err) {
+      console.error('Error fetching recipes:', err);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!user) {
+      navigate('/login');
+      return;
+    }
+    fetchBlogs();
+    fetchRecipes();
+  }, [user, navigate, fetchBlogs, fetchRecipes]);
+
+  useEffect(() => {
+    // Listen for data changes (CRUD operations) instead of polling
+    const handleDataChange = (event) => {
+      console.log('Data changed, refreshing blogs:', event.detail);
+      fetchBlogs();
+      // Refresh comments for open blogs
+      Object.keys(showComments).forEach(blogId => {
+        if (showComments[blogId]) {
+          fetchBlogComments(blogId);
+        }
+      });
+    };
+    
+    window.addEventListener('dataChanged', handleDataChange);
+    
+    return () => {
+      window.removeEventListener('dataChanged', handleDataChange);
+    };
+  }, [fetchBlogs, fetchBlogComments, showComments]);
 
   const toggleComments = async (blogId) => {
     const isShowing = showComments[blogId];
@@ -344,15 +355,6 @@ export default function Blog() {
     try {
       await api.delete(`/blogs/${blogId}/comments/${commentId}`);
       await fetchBlogComments(blogId);
-    } catch (err) {
-      console.error(err);
-    }
-  };
-
-  const fetchRecipes = async () => {
-    try {
-      const res = await api.get('/recipes/my');
-      setRecipes(res.data);
     } catch (err) {
       console.error(err);
     }

@@ -33,14 +33,24 @@ api.interceptors.response.use(
     // Check if this is a CRUD operation (POST, PUT, PATCH, DELETE)
     const method = response.config.method?.toUpperCase();
     if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      // Log for debugging
+      console.log('🔄 CRUD operation detected:', { 
+        method, 
+        url: response.config.url,
+        status: response.status 
+      });
+      
       // Dispatch data change event to trigger UI refresh
-      window.dispatchEvent(new CustomEvent('dataChanged', { 
+      const event = new CustomEvent('dataChanged', { 
         detail: { 
           method,
           url: response.config.url,
           timestamp: Date.now()
         } 
-      }));
+      });
+      
+      window.dispatchEvent(event);
+      console.log('📢 dataChanged event dispatched');
     }
     
     return response;

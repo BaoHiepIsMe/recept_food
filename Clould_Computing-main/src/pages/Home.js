@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 
@@ -8,7 +8,7 @@ export default function Home() {
   const [loading, setLoading] = useState(true);
   const navigate = useNavigate();
 
-  const fetchRecipes = async (query = '') => {
+  const fetchRecipes = useCallback(async (query = '') => {
     try {
       setLoading(true);
       const endpoint = query ? `/recipes/search?q=${query}` : '/recipes';
@@ -19,11 +19,13 @@ export default function Home() {
     } finally {
       setLoading(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchRecipes();
-    
+    fetchRecipes(search);
+  }, [search, fetchRecipes]);
+
+  useEffect(() => {
     // Listen for data changes (CRUD operations) instead of polling
     const handleDataChange = (event) => {
       console.log('Data changed, refreshing recipes:', event.detail);
@@ -35,7 +37,7 @@ export default function Home() {
     return () => {
       window.removeEventListener('dataChanged', handleDataChange);
     };
-  }, [search]);
+  }, [fetchRecipes, search]);
 
   const handleSearch = (e) => {
     e.preventDefault();

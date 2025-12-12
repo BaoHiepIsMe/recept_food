@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -19,13 +19,27 @@ export default function MyRecipes() {
     imagePreview: null,
   });
 
+  const fetchMyRecipes = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await api.get('/recipes/my');
+      setRecipes(res.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!user) {
       navigate('/login');
       return;
     }
     fetchMyRecipes();
-    
+  }, [user, navigate, fetchMyRecipes]);
+
+  useEffect(() => {
     // Listen for data changes (CRUD operations) instead of polling
     const handleDataChange = (event) => {
       console.log('Data changed, refreshing my recipes:', event.detail);
@@ -37,19 +51,7 @@ export default function MyRecipes() {
     return () => {
       window.removeEventListener('dataChanged', handleDataChange);
     };
-  }, [user, navigate]);
-
-  const fetchMyRecipes = async () => {
-    try {
-      setLoading(true);
-      const res = await api.get('/recipes/my');
-      setRecipes(res.data);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [fetchMyRecipes]);
 
   const handleInputChange = (e) => {
     const { name, value } = e.target;

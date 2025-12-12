@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import api from '../api';
 import { useAuth } from '../context/AuthContext';
@@ -9,13 +9,27 @@ export default function Favorites() {
   const { user } = useAuth();
   const navigate = useNavigate();
 
+  const fetchFavorites = useCallback(async () => {
+    try {
+      setLoading(true);
+      const res = await api.get('/recipes/favorites');
+      setRecipes(res.data);
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
   useEffect(() => {
     if (!user) {
       navigate('/login');
       return;
     }
     fetchFavorites();
-    
+  }, [user, navigate, fetchFavorites]);
+
+  useEffect(() => {
     // Listen for data changes (CRUD operations)
     const handleDataChange = (event) => {
       console.log('Data changed, refreshing favorites:', event.detail);
@@ -27,19 +41,7 @@ export default function Favorites() {
     return () => {
       window.removeEventListener('dataChanged', handleDataChange);
     };
-  }, [user, navigate]);
-
-  const fetchFavorites = async () => {
-    try {
-      setLoading(true);
-      const res = await api.get('/recipes/favorites');
-      setRecipes(res.data);
-    } catch (err) {
-      console.error(err);
-    } finally {
-      setLoading(false);
-    }
-  };
+  }, [fetchFavorites]);
 
   const handleRemoveFavorite = async (recipeId) => {
     try {
