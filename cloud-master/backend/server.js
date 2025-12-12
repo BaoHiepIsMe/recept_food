@@ -7,6 +7,7 @@ import recipeRoutes from './routes/recipeRoutes.js';
 import authRoutes from './routes/authRoutes.js';
 import blogRoutes from './routes/blogRoutes.js';
 import notificationRoutes from './routes/notificationRoutes.js';
+import './utils/eventPublisher.js'; // Initialize Redis connection
 
 dotenv.config();
 

@@ -1,16 +1,19 @@
 // ============================================
 // EC2 D - Server Tổng (PubSub Central)
 // ============================================
-const express = require('express');
-const http = require('http');
-const { Server } = require('socket.io');
-const Redis = require('ioredis');
-const cors = require('cors');
+import express from 'express';
+import { createServer } from 'http';
+import { Server } from 'socket.io';
+import Redis from 'ioredis';
+import cors from 'cors';
+import dotenv from 'dotenv';
+
+dotenv.config();
 
 const app = express();
 app.use(cors());
 
-const server = http.createServer(app);
+const server = createServer(app);
 
 // Socket.IO server cho WebSocket
 const io = new Server(server, {
@@ -88,7 +91,7 @@ app.get('/health', (req, res) => {
   });
 });
 
-const PORT = process.env.PORT || 4000;
+const PORT = process.env.PUBSUB_PORT || process.env.PORT || 4000;
 server.listen(PORT, () => {
   console.log(`🚀 PubSub Server running on port ${PORT}`);
   console.log(`📡 WebSocket ready for connections`);
