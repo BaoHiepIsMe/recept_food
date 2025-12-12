@@ -24,12 +24,17 @@ export default function Home() {
   useEffect(() => {
     fetchRecipes();
     
-    // Real-time polling: refresh every 3 seconds
-    const interval = setInterval(() => {
+    // Listen for data changes (CRUD operations) instead of polling
+    const handleDataChange = (event) => {
+      console.log('Data changed, refreshing recipes:', event.detail);
       fetchRecipes(search);
-    }, 3000);
+    };
     
-    return () => clearInterval(interval);
+    window.addEventListener('dataChanged', handleDataChange);
+    
+    return () => {
+      window.removeEventListener('dataChanged', handleDataChange);
+    };
   }, [search]);
 
   const handleSearch = (e) => {

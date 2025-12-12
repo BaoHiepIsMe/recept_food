@@ -15,6 +15,18 @@ export default function Favorites() {
       return;
     }
     fetchFavorites();
+    
+    // Listen for data changes (CRUD operations)
+    const handleDataChange = (event) => {
+      console.log('Data changed, refreshing favorites:', event.detail);
+      fetchFavorites();
+    };
+    
+    window.addEventListener('dataChanged', handleDataChange);
+    
+    return () => {
+      window.removeEventListener('dataChanged', handleDataChange);
+    };
   }, [user, navigate]);
 
   const fetchFavorites = async () => {

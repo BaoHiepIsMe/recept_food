@@ -29,6 +29,20 @@ api.interceptors.response.use(
       // Dispatch custom event for components to listen
       window.dispatchEvent(new CustomEvent('serverIdUpdate', { detail: serverId }));
     }
+
+    // Check if this is a CRUD operation (POST, PUT, PATCH, DELETE)
+    const method = response.config.method?.toUpperCase();
+    if (['POST', 'PUT', 'PATCH', 'DELETE'].includes(method)) {
+      // Dispatch data change event to trigger UI refresh
+      window.dispatchEvent(new CustomEvent('dataChanged', { 
+        detail: { 
+          method,
+          url: response.config.url,
+          timestamp: Date.now()
+        } 
+      }));
+    }
+    
     return response;
   },
   (error) => {

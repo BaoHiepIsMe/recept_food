@@ -171,8 +171,9 @@ export default function Blog() {
     fetchBlogs();
     fetchRecipes();
     
-    // Real-time polling: refresh blogs every 3 seconds
-    const interval = setInterval(() => {
+    // Listen for data changes (CRUD operations) instead of polling
+    const handleDataChange = (event) => {
+      console.log('Data changed, refreshing blogs:', event.detail);
       fetchBlogs();
       // Refresh comments for open blogs
       Object.keys(showComments).forEach(blogId => {
@@ -180,9 +181,13 @@ export default function Blog() {
           fetchBlogComments(blogId);
         }
       });
-    }, 3000);
+    };
     
-    return () => clearInterval(interval);
+    window.addEventListener('dataChanged', handleDataChange);
+    
+    return () => {
+      window.removeEventListener('dataChanged', handleDataChange);
+    };
   }, [user, showComments, navigate]);
 
   const fetchBlogs = async () => {

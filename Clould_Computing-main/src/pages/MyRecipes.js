@@ -26,12 +26,17 @@ export default function MyRecipes() {
     }
     fetchMyRecipes();
     
-    // Real-time polling: refresh every 3 seconds
-    const interval = setInterval(() => {
+    // Listen for data changes (CRUD operations) instead of polling
+    const handleDataChange = (event) => {
+      console.log('Data changed, refreshing my recipes:', event.detail);
       fetchMyRecipes();
-    }, 3000);
+    };
     
-    return () => clearInterval(interval);
+    window.addEventListener('dataChanged', handleDataChange);
+    
+    return () => {
+      window.removeEventListener('dataChanged', handleDataChange);
+    };
   }, [user, navigate]);
 
   const fetchMyRecipes = async () => {
