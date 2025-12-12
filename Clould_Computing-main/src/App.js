@@ -1,5 +1,7 @@
 import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import { useEffect } from 'react';
 import { AuthProvider } from './context/AuthContext';
+import websocketService from './services/websocket';
 import Layout from './components/Layout';
 import Home from './pages/Home';
 import Favorites from './pages/Favorites';
@@ -12,6 +14,30 @@ import RecipeDetail from './pages/RecipeDetail';
 import './App.css';
 
 function App() {
+  useEffect(() => {
+    // Connect to WebSocket PubSub server
+    websocketService.connect();
+    
+    // Listen for ANY data changes
+    const unsubscribe = websocketService.on('*', ({ channel, data }) => {
+      console.log(`🔔 Global event received: ${channel}`, data);
+      
+      // Dispatch browser event for backward compatibility
+      window.dispatchEvent(new CustomEvent('dataChanged', { 
+        detail: { 
+          channel,
+          ...data,
+          timestamp: Date.now()
+        } 
+      }));
+    });
+    
+    return () => {
+      unsubscribe();
+      websocketService.disconnect();
+    };
+  }, []);
+
   return (
     <AuthProvider>
       <Router>

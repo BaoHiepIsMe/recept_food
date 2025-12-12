@@ -6,6 +6,7 @@ import Favorite from "../models/Favorite.js";
 import User from "../models/User.js";
 import { uploadToCloudinary, deleteFromCloudinary } from "../utils/cloudinary.js";
 import { createNotification } from "../utils/notifications.js";
+import { publishEvent } from "../utils/eventPublisher.js";
 import commentRoutes from "./commentRoutes.js";
 
 const router = express.Router();
@@ -193,6 +194,13 @@ router.post("/", authenticate, upload.single('image'), async (req, res) => {
       createdAt: recipe.createdAt
     };
 
+    // 🔥 Emit event to Redis PubSub
+    await publishEvent('recipe:created', {
+      recipeId: recipe._id.toString(),
+      recipe: formattedRecipe,
+      authorId: req.user.id
+    });
+
     res.status(201).json(formattedRecipe);
   } catch (error) {
     console.error('Unexpected error in POST /recipes:', error);
@@ -255,6 +263,13 @@ router.put("/:id", authenticate, upload.single('image'), async (req, res) => {
       createdAt: recipe.createdAt
     };
 
+    // 🔥 Emit event to Redis PubSub
+    await publishEvent('recipe:updated', {
+      recipeId: recipe._id.toString(),
+      recipe: formattedRecipe,
+      authorId: req.user.id
+    });
+
     res.json(formattedRecipe);
   } catch (error) {
     console.error('Error updating recipe:', error);
@@ -287,6 +302,12 @@ router.delete("/:id", authenticate, async (req, res) => {
     }
 
     await Recipe.findByIdAndDelete(recipeId);
+
+    // 🔥 Emit event to Redis PubSub
+    await publishEvent('recipe:deleted', {
+      recipeId: recipeId,
+      authorId: req.user.id
+    });
 
     res.json({ message: 'Recipe deleted' });
   } catch (error) {

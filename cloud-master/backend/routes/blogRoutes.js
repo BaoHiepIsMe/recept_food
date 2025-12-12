@@ -10,6 +10,7 @@ import User from '../models/User.js';
 import Recipe from '../models/Recipe.js';
 import { uploadToCloudinary, deleteFromCloudinary } from '../utils/cloudinary.js';
 import { createNotification } from '../utils/notifications.js';
+import { publishEvent } from '../utils/eventPublisher.js';
 import blogCommentRoutes from './blogCommentRoutes.js';
 
 const router = express.Router();

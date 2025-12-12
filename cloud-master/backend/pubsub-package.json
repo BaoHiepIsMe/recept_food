@@ -1,0 +1,24 @@
+{
+  "name": "pubsub-server",
+  "version": "1.0.0",
+  "description": "WebSocket PubSub Server for Real-time Updates",
+  "main": "pubsub-server.js",
+  "type": "module",
+  "scripts": {
+    "start": "node pubsub-server.js",
+    "dev": "nodemon pubsub-server.js",
+    "test": "echo \"No tests specified\" && exit 0"
+  },
+  "dependencies": {
+    "express": "^4.18.2",
+    "socket.io": "^4.6.1",
+    "ioredis": "^5.3.2",
+    "cors": "^2.8.5"
+  },
+  "devDependencies": {
+    "nodemon": "^3.0.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
