@@ -130,9 +130,9 @@ sleep 5
 # Step 9: Add shards to cluster
 echo "🔗 Adding shards to cluster..."
 mongosh --port $MONGOS_PORT <<EOF
-sh.addShard("shardA/$SHARD_A_IP:27018")
-sh.addShard("shardB/$SHARD_B_IP:27018")
-sh.addShard("shardC/$SHARD_C_IP:27018")
+sh.addShard("shardA-rs/$SHARD_A_IP:27017")
+sh.addShard("shardB-rs/$SHARD_B_IP:27017")
+sh.addShard("shardC-rs/$SHARD_C_IP:27017")
 
 sh.enableSharding("recipe-share")
 
